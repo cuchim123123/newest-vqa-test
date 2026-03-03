@@ -17,7 +17,7 @@ class DataConfig:
 class ModelConfig:
     """Cấu hình kiến trúc mô hình."""
     embed_size: int = 300
-    hidden_size: int = 512
+    hidden_size: int = 256
     num_layers: int = 2
     dropout: float = 0.3
     use_pretrained_cnn: bool = True
@@ -27,32 +27,35 @@ class ModelConfig:
 class TrainConfig:
     """Siêu tham số huấn luyện."""
     epochs: int = 20
-    batch_size: int = 64
+    batch_size: int = 32 
     learning_rate: float = 3e-4
     label_smoothing: float = 0.1
     grad_clip: float = 5.0
     patience: int = 7
-    beam_width: int = 5
+    beam_width: int = 10
     len_alpha: float = 0.6
-    rep_penalty: float = 1.2
-    min_gen_len: int = 5
     tf_start: float = 1.0
-    tf_end: float = 0.5
+    tf_end: float = 0.0
     scheduler: str = "cosine"
     eta_min: float = 1e-6
-    num_workers: int = 0       # 0 trên Windows để tránh lỗi multiprocessing
-    pin_memory: bool = False   # False trên CPU
-    eval_every: int = 1
-    warmup_epochs: int = 3
-    use_amp: bool = False
+    num_workers: int = 0
+    pin_memory: bool = True
+    eval_every: int = 2       
+    warmup_epochs: int = 3    
+    
+    rep_penalty: float = 1.2
+    min_gen_len: int = 5
+    use_amp: bool = True
 
 @dataclass
 class Config:
     """Cấu hình tổng hợp cho dự án."""
     seed: int = 42
     device: str = "auto"
-    log_dir: str = "logs"
-    ckpt_dir: str = "checkpoints"
+    
+    log_dir: str = "/kaggle/working/logs"
+    ckpt_dir: str = "/kaggle/working/checkpoints"
+    
     data: DataConfig = field(default_factory=DataConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
     train: TrainConfig = field(default_factory=TrainConfig)
@@ -65,7 +68,6 @@ class Config:
             raw = yaml.safe_load(f)
 
         cfg = cls()
-        # Duyệt và gán giá trị từ file YAML vào các dataclass con
         if "seed" in raw: cfg.seed = raw["seed"]
         if "device" in raw: cfg.device = raw["device"]
         if "log_dir" in raw: cfg.log_dir = raw["log_dir"]
@@ -77,6 +79,9 @@ class Config:
                 for k, v in raw[section_name].items():
                     if hasattr(section_obj, k):
                         setattr(section_obj, k, v)
+                    else:
+                        # Thêm cảnh báo nếu có key trong YAML nhưng thiếu trong dataclass
+                        print(f"huộc tính '{k}' có trong YAML nhưng không tồn tại trong class {section_obj.__class__.__name__}")
         
         if "model_variants" in raw:
             cfg.model_variants = raw["model_variants"]

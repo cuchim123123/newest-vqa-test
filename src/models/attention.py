@@ -15,7 +15,7 @@ class BahdanauAttention(nn.Module):
     def forward(self, query: torch.Tensor, keys: torch.Tensor, mask: Optional[torch.Tensor] = None) -> tuple[torch.Tensor, torch.Tensor]:
         scores = self.Va(torch.tanh(self.Wa(query.unsqueeze(1)) + self.Ua(keys))).squeeze(2)
         if mask is not None:
-            scores = scores.masked_fill(mask == 0, -1e9)
+            scores = scores.masked_fill(mask == 0, torch.finfo(scores.dtype).min)
         weights = torch.softmax(scores, dim=1)
         context = torch.bmm(weights.unsqueeze(1), keys).squeeze(1)
         return context, weights

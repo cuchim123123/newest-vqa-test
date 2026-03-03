@@ -1,0 +1,13 @@
+2026-03-02 23:12:50,461 | WARNING | [M1_Scratch_NoAttn] Missing keys (will use defaults): ['image_encoder.mean', 'image_encoder.std']
+2026-03-02 23:12:50,461 | INFO | Loaded best checkpoint for M1_Scratch_NoAttn
+2026-03-02 23:31:45,567 | INFO |   M1_Scratch_NoAttn F1=0.3167 BLEU1=0.3973 BLEU4=0.0947 METEOR=0.2369
+2026-03-02 23:31:45,715 | WARNING | [M2_Scratch_Attn] Missing keys (will use defaults): ['image_encoder.mean', 'image_encoder.std']
+2026-03-02 23:31:45,717 | INFO | Loaded best checkpoint for M2_Scratch_Attn
+2026-03-02 23:56:22,911 | INFO |   M2_Scratch_Attn F1=0.3262 BLEU1=0.4068 BLEU4=0.0994 METEOR=0.2483
+2026-03-02 23:56:23,207 | WARNING | [M3_Pretrained_NoAttn] Missing keys (will use defaults): ['image_encoder.mean', 'image_encoder.std']
+2026-03-02 23:56:23,207 | INFO | Loaded best checkpoint for M3_Pretrained_NoAttn
+2026-03-03 00:13:39,200 | INFO |   M3_Pretrained_NoAttn F1=0.3042 BLEU1=0.3898 BLEU4=0.0961 METEOR=0.2303
+2026-03-03 00:13:39,578 | WARNING | [M4_Pretrained_Attn] Missing keys (will use defaults): ['image_encoder.mean', 'image_encoder.std']
+2026-03-03 00:13:39,578 | INFO | Loaded best checkpoint for M4_Pretrained_Attn
+2026-03-03 00:35:38,261 | INFO |   M4_Pretrained_Attn F1=0.3124 BLEU1=0.3877 BLEU4=0.0928 METEOR=0.2388
+2026-03-03 00:35:39,128 | INFO | Plotting confusion matrix placeholder...

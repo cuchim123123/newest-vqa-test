@@ -1,8 +1,7 @@
-"""Visualization utilities for VQA (Local Run — Windows compatible)."""
+"""Visualization utilities updated for Dual Attention (Spatial + Text)."""
 
 from __future__ import annotations
 import logging
-import os
 from collections import defaultdict
 from typing import Any, Optional
 
@@ -17,402 +16,246 @@ from src.data.preprocessing import normalize_answer, majority_answer, classify_q
 COLORS = ["#e74c3c", "#3498db", "#2ecc71", "#9b59b6"]
 logger = logging.getLogger("VQA")
 
-_INV_NORM = transforms.Normalize(
-    mean=[-0.485 / 0.229, -0.456 / 0.224, -0.406 / 0.225],
-    std=[1 / 0.229, 1 / 0.224, 1 / 0.225],
-)
-
-
-def plot_training_curves(
-    all_histories: dict[str, dict[str, list[float]]],
-    save_prefix: str = "fig",
-) -> None:
-    """Vẽ 3 đồ thị: Train Loss, Val Loss, Learning Rate theo epoch."""
+# ═══════════════════════════════════════════════════════════════════════
+# 1. Training curves
+# ═══════════════════════════════════════════════════════════════════════
+def plot_training_curves(all_histories: dict[str, dict[str, list[float]]], save_prefix: str = "fig") -> None:
     fig, axes = plt.subplots(1, 3, figsize=(21, 5))
     titles = ["Training Loss", "Validation Loss", "Learning Rate"]
-    keys   = ["train_loss",   "val_loss",        "lr"]
-
+    keys = ["train_loss", "val_loss", "lr"]
+    
     for ax, key, title in zip(axes, keys, titles):
         for i, (name, h) in enumerate(all_histories.items()):
-            vals = h.get(key, [])
-            if vals:
-                ax.plot(vals, label=name, color=COLORS[i % len(COLORS)], marker="o", ms=3)
+            ax.plot(h[key], label=name, color=COLORS[i % len(COLORS)], marker="o", ms=3)
         ax.set_title(title, fontweight="bold")
-        ax.set_xlabel("Epoch")
-        ax.legend(fontsize=8)
-        ax.grid(alpha=0.3)
-
+        ax.legend(fontsize=8); ax.grid(alpha=0.3)
     plt.tight_layout()
-    save_path = f"{save_prefix}1_loss_lr.png"
-    plt.savefig(save_path, dpi=200, bbox_inches="tight")
-    plt.close(fig)
-    print(f"Saved: {save_path}")
+    plt.savefig(f"{save_prefix}1_loss_lr.png", dpi=200)
+    plt.show()
 
-    # Val F1 theo epoch
-    fig2, ax2 = plt.subplots(figsize=(10, 5))
-    for i, (name, h) in enumerate(all_histories.items()):
-        vals = h.get("val_f1", [])
-        if vals:
-            ax2.plot(vals, label=name, color=COLORS[i % len(COLORS)], marker="o", ms=3)
-    ax2.set_title("Validation F1 Score", fontweight="bold")
-    ax2.set_xlabel("Epoch")
-    ax2.set_ylabel("F1")
-    ax2.legend(fontsize=8)
-    ax2.grid(alpha=0.3)
-    plt.tight_layout()
-    save_path2 = f"{save_prefix}2_val_f1.png"
-    plt.savefig(save_path2, dpi=200, bbox_inches="tight")
-    plt.close(fig2)
-    print(f"Saved: {save_path2}")
-def visualize_attention(
-    model, loader, answer_vocab, question_vocab, device,
-    n: int = 3, save_path: str = "fig6_attn.png",
-) -> None:
-    if not model.use_attention:
-        print("Model không có attention, bỏ qua visualize_attention.")
-        return
-
+# ═══════════════════════════════════════════════════════════════════════
+# 2. Dual Attention Visualization
+# ═══════════════════════════════════════════════════════════════════════
+def visualize_attention(model, loader, answer_vocab, question_vocab, device, n=3, save_path="fig6_attn.png") -> None:
+    if not model.use_attention: return
     model.eval()
     batch = next(iter(loader))
-    imgs, qs, ql, _, _, ans_txt = batch
-    imgs_d = imgs.to(device)
-    qs_d   = qs.to(device)
-    ql_d   = ql.to(device)
+    # collate_fn returns: images, questions, q_lengths, answers, a_lengths, answer_texts, raw_qs
+    imgs, qs, ql, ans, al, ans_txt, raw_qs = batch
+    imgs_d, qs_d, ql_d = imgs.to(device), qs.to(device), ql.to(device)
+    inv_norm = transforms.Normalize(mean=[-0.485/0.229, -0.456/0.224, -0.406/0.225], std=[1/0.229, 1/0.224, 1/0.225])
 
-    collected_figs: list[plt.Figure] = []
-
-    for idx in range(min(n, imgs.size(0))):
-        with torch.no_grad():
-            img_feat = model.image_encoder(imgs_d[idx : idx + 1])            # (1, 49, D)
-            q_out, (h, c), _ = model.question_encoder(
-                qs_d[idx : idx + 1], ql_d[idx : idx + 1]
-            )  # q_out: (1, q_len_packed, H)
-
-        # Recompute q_mask to match q_out's actual sequence length (max(lengths) for this sub-batch)
-        actual_q_len = q_out.size(1)
-        sample_len   = int(ql_d[idx].item())
-        q_mask = torch.zeros(1, actual_q_len, device=device)
-        q_mask[0, : min(sample_len, actual_q_len)] = 1.0
-
-        # Collect readable question tokens (no special tokens)
-        q_ids = qs[idx].tolist()
-        q_toks = [
-            question_vocab.itos.get(t, "?")
-            for t in q_ids
-            if t not in (PAD_IDX, SOS_IDX, EOS_IDX)
-        ]
-        q_len = actual_q_len  # padded sequence length from encoder
-
-        text_attn_list: list[np.ndarray] = []
-        gen_tokens: list[int] = []
-
-        tok = torch.tensor([SOS_IDX], device=device)
-        for _ in range(30):
-            with torch.no_grad():
-                emb = model.answer_decoder.embedding(tok.unsqueeze(1))          # (1,1,E)
-                text_ctx, t_weights = model.answer_decoder.text_attention(
-                    h[-1], q_out, q_mask
-                )  # t_weights: (1, q_len)
-                img_ctx, _ = model.answer_decoder.spatial_attention(h[-1], img_feat)
-
-                # Lưu attention weights — luôn là (q_len,) sau khi squeeze
-                tw = t_weights.squeeze(0).cpu().numpy()  # (q_len,)
-                text_attn_list.append(tw)
-
-                inp = torch.cat([emb, text_ctx.unsqueeze(1), img_ctx.unsqueeze(1)], dim=2)
-                out, (h, c) = model.answer_decoder.lstm(inp, (h, c))
-                residual    = model.answer_decoder.res_proj(inp.squeeze(1))
-                out_res     = model.answer_decoder.layer_norm(out.squeeze(1) + residual)
-                pred        = model.answer_decoder.fc(model.answer_decoder.fc_drop(out_res))
-                tok         = pred.argmax(1)
-
-            gen_tokens.append(tok.item())
-            if tok.item() == EOS_IDX:
-                break
-
-        a_toks = [
-            answer_vocab.itos.get(t, "?")
-            for t in gen_tokens
-            if t not in (EOS_IDX, PAD_IDX)
-        ]
-
-        if not q_toks or not a_toks:
-            continue
-
-        # Build attention matrix: (n_ans_toks, q_len)
-        mat = np.array(text_attn_list[: len(a_toks)])  # (A, q_len)
-        # Trim columns to actual (non-padded) question tokens
-        if mat.shape[1] > len(q_toks):
-            mat = mat[:, : len(q_toks)]
-        effective_q = mat.shape[1]
-
-        img_show = _INV_NORM(imgs[idx]).clamp(0, 1).permute(1, 2, 0).numpy()
-
+    for idx in range(min(n, len(ans_txt))):
         fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-        axes[0].imshow(img_show)
-        axes[0].axis("off")
-        axes[0].set_title(
-            f"Q: {' '.join(q_toks)}\nPred: {' '.join(a_toks)}", fontsize=9
-        )
-
-        im = axes[1].imshow(mat, cmap="YlOrRd", aspect="auto")
-        axes[1].set_xticks(range(effective_q))
-        axes[1].set_xticklabels(q_toks[:effective_q], rotation=45, ha="right", fontsize=8)
-        axes[1].set_yticks(range(len(a_toks)))
-        axes[1].set_yticklabels(a_toks, fontsize=8)
-        axes[1].set_title("Text Attention Weights")
-        plt.colorbar(im, ax=axes[1])
-        plt.tight_layout()
-        collected_figs.append(fig)
-
-    if collected_figs:
-        collected_figs[0].savefig(save_path, dpi=150, bbox_inches="tight")
-        print(f"Saved: {save_path}")
-        for f in collected_figs:
-            plt.figure(f.number)
-            plt.show()
-            plt.close(f)
-    else:
-        print("visualize_attention: không có sample nào hợp lệ để vẽ.")
-def visualize_attention_overlay(
-    model, loader, answer_vocab, question_vocab, device,
-    n: int = 3, save_path: str = "fig7_overlay.png",
-) -> None:
-    if not model.use_attention:
-        print("Model không có attention, bỏ qua visualize_attention_overlay.")
-        return
-
-    model.eval()
-    batch = next(iter(loader))
-    imgs, qs, ql, _, _, ans_txt = batch
-    imgs_d = imgs.to(device)
-    qs_d   = qs.to(device)
-    ql_d   = ql.to(device)
-
-    collected_figs: list[plt.Figure] = []
-
-    for idx in range(min(n, imgs.size(0))):
-        with torch.no_grad():
-            img_feat = model.image_encoder(imgs_d[idx : idx + 1])  # (1, 49, D)
-            q_out, (h, c), _ = model.question_encoder(
-                qs_d[idx : idx + 1], ql_d[idx : idx + 1]
-            )
-
-        # Recompute q_mask to match q_out's actual packed sequence length
-        actual_q_len = q_out.size(1)
-        sample_len   = int(ql_d[idx].item())
-        q_mask = torch.zeros(1, actual_q_len, device=device)
-        q_mask[0, : min(sample_len, actual_q_len)] = 1.0
-
-        spatial_attn_maps: list[np.ndarray] = []
-        gen_tokens: list[int] = []
-
+        img_feat = model.image_encoder(imgs_d[idx:idx+1])
+        q_out, (h, c), q_mask = model.question_encoder(qs_d[idx:idx+1], ql_d[idx:idx+1])
         tok = torch.tensor([SOS_IDX], device=device)
-        for _ in range(30):
-            with torch.no_grad():
+        text_attn_list, gen_tokens = [], []
+
+        with torch.no_grad():
+            for _ in range(15):
                 emb = model.answer_decoder.embedding(tok.unsqueeze(1))
-                text_ctx, _ = model.answer_decoder.text_attention(h[-1], q_out, q_mask)
+                text_ctx, t_weights = model.answer_decoder.text_attention(h[-1], q_out, q_mask)
                 img_ctx, s_weights = model.answer_decoder.spatial_attention(h[-1], img_feat)
-                # s_weights: (1, 49) → squeeze → (49,)
-                spatial_attn_maps.append(s_weights.squeeze().cpu().numpy())
-
-                inp = torch.cat([emb, text_ctx.unsqueeze(1), img_ctx.unsqueeze(1)], dim=2)
+                text_attn_list.append(t_weights.cpu().numpy().flatten())
+                inp = torch.cat([emb, text_ctx.unsqueeze(1), img_ctx.unsqueeze(1)], 2)
                 out, (h, c) = model.answer_decoder.lstm(inp, (h, c))
-                residual    = model.answer_decoder.res_proj(inp.squeeze(1))
-                out_res     = model.answer_decoder.layer_norm(out.squeeze(1) + residual)
-                pred        = model.answer_decoder.fc(model.answer_decoder.fc_drop(out_res))
-                tok         = pred.argmax(1)
+                pred = model.answer_decoder.fc(out.squeeze(1))
+                tok = pred.argmax(1)
+                gen_tokens.append(tok.item())
+                if tok.item() == EOS_IDX: break
 
-            gen_tokens.append(tok.item())
-            if tok.item() == EOS_IDX:
-                break
+        q_toks = [question_vocab.itos.get(t, "?") for t in qs[idx].tolist() if t not in (PAD_IDX, SOS_IDX, EOS_IDX)]
+        a_toks = [answer_vocab.itos.get(t, "?") for t in gen_tokens if t != EOS_IDX]
+        img_show = inv_norm(imgs[idx]).clamp(0, 1).permute(1, 2, 0).numpy()
+        axes[0].imshow(img_show); axes[0].axis("off")
+        axes[0].set_title(f"Q: {' '.join(q_toks)}\nPred: {' '.join(a_toks)}", fontsize=10)
+        mat = np.array(text_attn_list[:len(a_toks)])[:, :len(q_toks)]
+        im = axes[1].imshow(mat, cmap="YlOrRd", aspect="auto")
+        axes[1].set_xticks(range(len(q_toks))); axes[1].set_xticklabels(q_toks, rotation=45)
+        axes[1].set_yticks(range(len(a_toks))); axes[1].set_yticklabels(a_toks)
+        plt.colorbar(im, ax=axes[1]); plt.show()
 
-        a_toks = [answer_vocab.itos.get(t, "?") for t in gen_tokens if t not in (EOS_IDX, PAD_IDX)]
-        q_toks = [
-            question_vocab.itos.get(t, "?")
-            for t in qs[idx].tolist()
-            if t not in (PAD_IDX, SOS_IDX, EOS_IDX)
-        ]
-
-        img_show = _INV_NORM(imgs[idx]).clamp(0, 1).permute(1, 2, 0).numpy()
-
-        if not spatial_attn_maps:
-            continue
-
-        # Average spatial attention across decode steps
-        raw_maps = np.stack(spatial_attn_maps, axis=0)   # (steps, 49)
-        avg_attn  = raw_maps.mean(axis=0)                 # (49,)
-
-        n_regions = avg_attn.shape[0]
-        grid_size = int(round(np.sqrt(n_regions)))  # typically 7
-        if grid_size * grid_size != n_regions:
-            # fallback: pick nearest square
-            grid_size = int(np.sqrt(n_regions))
-            avg_attn = avg_attn[: grid_size * grid_size]
-
-        attn_map = avg_attn.reshape(grid_size, grid_size)
-
-        H, W = img_show.shape[:2]
-        # Upsample attention map to image size using kron
-        scale_h = (H + grid_size - 1) // grid_size
-        scale_w = (W + grid_size - 1) // grid_size
-        attn_full = np.kron(attn_map / (attn_map.max() + 1e-8), np.ones((scale_h, scale_w)))
-        attn_full = attn_full[:H, :W]
-
-        fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-        axes[0].imshow(img_show)
-        axes[0].axis("off")
-        axes[0].set_title(f"Q: {' '.join(q_toks)}\nA: {' '.join(a_toks)}", fontsize=9)
-
-        axes[1].imshow(attn_map, cmap="hot", interpolation="bilinear")
-        axes[1].set_title("Spatial Attention Heatmap")
-        axes[1].axis("off")
-
-        axes[2].imshow(img_show)
-        axes[2].imshow(attn_full, cmap="jet", alpha=0.45)
-        axes[2].set_title("Spatial Attention Overlay")
-        axes[2].axis("off")
-
-        plt.tight_layout()
-        collected_figs.append(fig)
-
-    if collected_figs:
-        collected_figs[0].savefig(save_path, dpi=150, bbox_inches="tight")
-        print(f"Saved: {save_path}")
-        for f in collected_figs:
-            plt.figure(f.number)
-            plt.show()
-            plt.close(f)
-    else:
-        print("visualize_attention_overlay: không có sample nào hợp lệ để vẽ.")
-def plot_radar_chart(
-    test_results: dict[str, dict[str, float]],
-    save_path: str = "fig4_radar.png",
-) -> None:
-    """Radar chart so sánh các metric chính giữa các mô hình."""
-    # Dùng 4 độ đo chính cho rationale: F1, METEOR, ROUGE-L, BLEU-4
-    metrics = ["f1", "meteor", "rouge_l", "bleu4"]
-    labels  = ["F1", "METEOR", "R-L", "B-4"]
-    angles  = np.linspace(0, 2 * np.pi, len(metrics), endpoint=False).tolist()
+# ═══════════════════════════════════════════════════════════════════════
+# 3. Missing CLI Helpers
+# ═══════════════════════════════════════════════════════════════════════
+def plot_radar_chart(test_results: dict[str, dict[str, float]], save_path: str = "fig4_radar.png") -> None:
+    metrics = ["accuracy", "em", "f1", "meteor", "bleu4"]
+    labels = ["Acc", "EM", "F1", "METEOR", "B-4"]
+    angles = np.linspace(0, 2 * np.pi, len(metrics), endpoint=False).tolist()
     angles += angles[:1]
-
     fig, ax = plt.subplots(figsize=(8, 8), subplot_kw=dict(polar=True))
     for i, (name, m) in enumerate(test_results.items()):
         values = [m.get(k, 0.0) for k in metrics] + [m.get(metrics[0], 0.0)]
         ax.plot(angles, values, "o-", label=name, color=COLORS[i % len(COLORS)], linewidth=2)
-        ax.fill(angles, values, alpha=0.1, color=COLORS[i % len(COLORS)])
+    ax.set_xticks(angles[:-1]); ax.set_xticklabels(labels); ax.legend()
+    plt.savefig(save_path); plt.show()
 
-    ax.set_xticks(angles[:-1])
-    ax.set_xticklabels(labels, size=12)
-    ax.set_title("Model Comparison (Radar)", size=14, fontweight="bold", pad=20)
-    ax.legend(loc="upper right", bbox_to_anchor=(1.3, 1.1))
-    plt.tight_layout()
-    plt.savefig(save_path, dpi=200, bbox_inches="tight")
-    plt.show()
-    plt.close()
-    print(f"Saved: {save_path}")
-
-
-def plot_bar_chart(
-    test_results: dict[str, dict[str, float]],
-    save_path: str = "fig5_bar.png",
-) -> None:
-    """Bar chart so sánh F1, METEOR, ROUGE-L, BLEU-4 giữa các mô hình."""
-    metric_groups = {
-        "F1":       "f1",
-        "METEOR":   "meteor",
-        "ROUGE-L":  "rouge_l",
-        "BLEU-4":   "bleu4",
-    }
-    names     = list(test_results.keys())
-    x         = np.arange(len(names))
-    bar_width = 0.2
-
-    fig, ax = plt.subplots(figsize=(14, 6))
-    for j, (label, key) in enumerate(metric_groups.items()):
-        vals = [test_results[n].get(key, 0.0) for n in names]
-        ax.bar(x + j * bar_width, vals, bar_width, label=label,
-               color=COLORS[j % len(COLORS)], alpha=0.85)
-
-    ax.set_xticks(x + bar_width * (len(metric_groups) - 1) / 2)
-    ax.set_xticklabels(names, rotation=15)
-    ax.set_ylabel("Score")
-    ax.set_title("Model Performance Comparison", fontweight="bold")
-    ax.legend()
-    ax.grid(axis="y", alpha=0.3)
-    plt.tight_layout()
-    plt.savefig(save_path, dpi=200, bbox_inches="tight")
-    plt.show()
-    plt.close()
-    print(f"Saved: {save_path}")
-def plot_question_type_analysis(
-    type_results: dict, save_path: str = "fig9_qtype.png"
-) -> None:
-    if not type_results:
-        print("Không có dữ liệu question type analysis.")
-        return
-
-    types  = list(type_results.keys())
-    f1s    = [type_results[t]["f1"] for t in types]
-    ems    = [type_results[t]["em"] for t in types]
-    counts = [type_results[t]["total"] for t in types]
-    x      = np.arange(len(types))
-
-    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
-
-    bars1 = axes[0].bar(x, f1s, color=COLORS[1], alpha=0.85)
-    axes[0].set_xticks(x)
-    axes[0].set_xticklabels(types, rotation=30, ha="right")
-    axes[0].set_title("F1 by Question Type", fontweight="bold")
-    axes[0].set_ylabel("F1 Score")
-    axes[0].grid(axis="y", alpha=0.3)
-    for bar, cnt in zip(bars1, counts):
-        axes[0].text(
-            bar.get_x() + bar.get_width() / 2,
-            bar.get_height() + 0.002,
-            f"n={cnt}", ha="center", fontsize=8,
-        )
-
-    axes[1].bar(x, ems, color=COLORS[0], alpha=0.85)
-    axes[1].set_xticks(x)
-    axes[1].set_xticklabels(types, rotation=30, ha="right")
-    axes[1].set_title("EM by Question Type", fontweight="bold")
-    axes[1].set_ylabel("Exact Match")
-    axes[1].grid(axis="y", alpha=0.3)
-
-    plt.tight_layout()
-    plt.savefig(save_path, dpi=200, bbox_inches="tight")
-    plt.show()
-    plt.close()
-    print(f"Saved: {save_path}")
-def plot_confusion_matrix(
-    preds: list, refs: list, questions: list,
-    save_path: str = "fig8_cm.png",
-) -> None:
-    """Stacked bar: tỷ lệ đúng/sai theo question type."""
-    type_correct: dict[str, list[float]] = defaultdict(list)
-    for p, r, q in zip(preds, refs, questions):
-        qtype   = classify_question(q)
-        ref_str = r if isinstance(r, str) else majority_answer(r)
-        is_correct = float(normalize_answer(p) == normalize_answer(ref_str))
-        type_correct[qtype].append(is_correct)
-
-    types          = sorted(type_correct.keys())
-    correct_rates  = [float(np.mean(type_correct[t])) for t in types]
-    error_rates    = [1.0 - r for r in correct_rates]
-    x              = np.arange(len(types))
-
+def plot_bar_chart(test_results: dict[str, dict[str, float]], save_path: str = "fig5_bar.png") -> None:
     fig, ax = plt.subplots(figsize=(12, 6))
-    ax.bar(x, correct_rates, color="#2ecc71", alpha=0.85, label="Correct (EM)")
-    ax.bar(x, error_rates, bottom=correct_rates, color="#e74c3c", alpha=0.85, label="Wrong")
-    ax.set_xticks(x)
-    ax.set_xticklabels(types, rotation=30, ha="right")
-    ax.set_title("Correct vs Wrong by Question Type", fontweight="bold")
-    ax.set_ylabel("Proportion")
-    ax.legend()
-    ax.grid(axis="y", alpha=0.3)
+    x = np.arange(len(test_results))
+    ax.bar(x, [m.get("f1", 0.0) for m in test_results.values()], color=COLORS[:len(test_results)])
+    ax.set_xticks(x); ax.set_xticklabels(test_results.keys()); ax.set_title("F1 Comparison")
+    plt.savefig(save_path); plt.show()
+
+def plot_confusion_matrix(preds, refs, questions=None, save_path="fig8_cm.png", top_k: int = 15):
+    """
+    Vẽ Confusion Matrix cho Top-K câu trả lời phổ biến nhất.
+    - preds: list[str]  — câu trả lời dự đoán
+    - refs : list[str | list[str]] — câu trả lời đúng (có thể là list)
+    - top_k: số lượng nhãn hiển thị (mặc định 15)
+    """
+    from collections import Counter
+    import numpy as np
+
+    # Chuẩn hóa refs về string đơn
+    flat_refs = [r[0] if isinstance(r, (list, tuple)) else r for r in refs]
+
+    # Chọn top_k nhãn xuất hiện nhiều nhất trong ground-truth
+    counter = Counter(flat_refs)
+    top_labels = [lbl for lbl, _ in counter.most_common(top_k)]
+    label_set = set(top_labels)
+    OTHER = "<other>"
+
+    # Map dự đoán và truth về top_k + <other>
+    def _map(s):
+        return s if s in label_set else OTHER
+
+    all_labels = top_labels + [OTHER]
+    label_idx = {l: i for i, l in enumerate(all_labels)}
+    n = len(all_labels)
+
+    matrix = np.zeros((n, n), dtype=int)
+    for p, r in zip(preds, flat_refs):
+        row = label_idx[_map(r)]   # true (trục Y)
+        col = label_idx[_map(p)]   # pred (trục X)
+        matrix[row, col] += 1
+
+    # Normalize theo từng hàng (recall per class)
+    row_sums = matrix.sum(axis=1, keepdims=True).clip(min=1)
+    matrix_norm = matrix / row_sums
+
+    fig, ax = plt.subplots(figsize=(max(10, n * 0.7), max(8, n * 0.6)))
+    im = ax.imshow(matrix_norm, cmap="Blues", vmin=0, vmax=1)
+
+    ax.set_xticks(range(n)); ax.set_xticklabels(all_labels, rotation=45, ha="right", fontsize=8)
+    ax.set_yticks(range(n)); ax.set_yticklabels(all_labels, fontsize=8)
+    ax.set_xlabel("Predicted", fontsize=11)
+    ax.set_ylabel("True", fontsize=11)
+    ax.set_title(f"Confusion Matrix — Top {top_k} Answers (row-normalized recall)", fontweight="bold")
+
+    # Ghi số lên ô
+    for i in range(n):
+        for j in range(n):
+            val = matrix_norm[i, j]
+            color = "white" if val > 0.5 else "black"
+            ax.text(j, i, f"{val:.2f}", ha="center", va="center", fontsize=6, color=color)
+
+    plt.colorbar(im, ax=ax, fraction=0.03, pad=0.04)
     plt.tight_layout()
-    plt.savefig(save_path, dpi=200, bbox_inches="tight")
+    plt.savefig(save_path, dpi=150, bbox_inches="tight")
     plt.show()
-    plt.close()
-    print(f"Saved: {save_path}")
+    logger.info(f"Confusion matrix saved to {save_path}")
+
+
+def plot_question_type_analysis(type_results, save_path="fig9_qtype.png"):
+    types = list(type_results.keys())
+    f1s = [type_results[t]["f1"] for t in types]
+    plt.figure(figsize=(12, 6))
+    plt.bar(types, f1s, color=COLORS[1])
+    plt.title("F1 Score by Question Type"); plt.xticks(rotation=45); plt.show()
+
+def visualize_attention_overlay(model, loader, answer_vocab, question_vocab, device, n=3, save_path="fig10_spatial_attn.png") -> None:
+    """Vẽ Heatmap đè lên ảnh gốc để thể hiện Spatial Attention."""
+    if not model.use_attention: 
+        logger.warning("Mô hình không sử dụng Attention. Bỏ qua vẽ Spatial Overlay.")
+        return
+        
+    model.eval()
+    batch = next(iter(loader))
+    # collate_fn returns: images, questions, q_lengths, answers, a_lengths, answer_texts, raw_qs
+    imgs, qs, ql, ans, al, ans_txt, raw_qs = batch
+    imgs_d, qs_d, ql_d = imgs.to(device), qs.to(device), ql.to(device)
+    
+    # Định nghĩa hàm giải chuẩn hóa để lấy lại ảnh gốc
+    inv_norm = transforms.Normalize(
+        mean=[-0.485/0.229, -0.456/0.224, -0.406/0.225], 
+        std=[1/0.229, 1/0.224, 1/0.225]
+    )
+
+    for idx in range(min(n, len(ans_txt))):
+        # 1. Trích xuất đặc trưng và tính toán Attention
+        img_feat = model.image_encoder(imgs_d[idx:idx+1])
+        q_out, (h, c), q_mask = model.question_encoder(qs_d[idx:idx+1], ql_d[idx:idx+1])
+        tok = torch.tensor([SOS_IDX], device=device)
+        
+        gen_tokens = []
+        spatial_weights_list = [] # Lưu trọng số không gian cho từng từ sinh ra
+
+        with torch.no_grad():
+            for step in range(15): # Sinh tối đa 15 từ
+                emb = model.answer_decoder.embedding(tok.unsqueeze(1))
+                text_ctx, _ = model.answer_decoder.text_attention(h[-1], q_out, q_mask)
+                
+                # Tính trọng số không gian s_weights có kích thước (1, 49)
+                img_ctx, s_weights = model.answer_decoder.spatial_attention(h[-1], img_feat)
+                spatial_weights_list.append(s_weights.cpu().numpy().flatten())
+                
+                inp = torch.cat([emb, text_ctx.unsqueeze(1), img_ctx.unsqueeze(1)], 2)
+                out, (h, c) = model.answer_decoder.lstm(inp, (h, c))
+                pred = model.answer_decoder.fc(out.squeeze(1))
+                tok = pred.argmax(1)
+                
+                if tok.item() == EOS_IDX: 
+                    break
+                gen_tokens.append(tok.item())
+
+        # 2. Xử lý ảnh gốc để vẽ
+        q_toks = [question_vocab.itos.get(t, "?") for t in qs[idx].tolist() if t not in (PAD_IDX, SOS_IDX, EOS_IDX)]
+        a_toks = [answer_vocab.itos.get(t, "?") for t in gen_tokens]
+        
+        # Chuyển tensor ảnh về numpy array (H, W, C)
+        img_original = inv_norm(imgs[idx]).clamp(0, 1).permute(1, 2, 0).numpy()
+        # Chuyển ảnh float [0,1] về uint8 [0,255] để dùng với OpenCV
+        img_uint8 = np.uint8(255 * img_original)
+
+        # 3. Vẽ biểu đồ: Ảnh gốc + Lưới Heatmap cho từng từ sinh ra
+        num_words = len(a_toks)
+        # Bố cục: 1 hàng, số cột = 1 (ảnh gốc) + số từ sinh ra
+        fig, axes = plt.subplots(1, num_words + 1, figsize=(4 * (num_words + 1), 4))
+        
+        # Tiêu đề chung cho toàn bộ hình
+        fig.suptitle(f"Q: {' '.join(q_toks)}", fontsize=16, fontweight="bold")
+        
+        # Vẽ ảnh gốc ở cột đầu tiên
+        axes[0].imshow(img_original)
+        axes[0].axis("off")
+        axes[0].set_title("Original Image", fontsize=12)
+
+        # Vẽ Heatmap cho từng từ
+        for i, word in enumerate(a_toks):
+            ax = axes[i + 1]
+            # Lấy vector trọng số (49,), chuyển thành ma trận 7x7
+            attn_map = spatial_weights_list[i].reshape(7, 7)
+            
+            # Phóng to ma trận 7x7 lên 224x224 (bằng kích thước ảnh)
+            try:
+                import cv2
+                attn_map_resized = cv2.resize(attn_map, (224, 224), interpolation=cv2.INTER_CUBIC)
+            except ImportError:
+                from PIL import Image as _PILImage
+                attn_map_resized = np.array(
+                    _PILImage.fromarray(attn_map).resize((224, 224), _PILImage.BICUBIC)
+                )
+            
+            # Vẽ ảnh gốc làm nền mờ
+            ax.imshow(img_original, alpha=0.5)
+            # Phủ Heatmap lên trên
+            im = ax.imshow(attn_map_resized, cmap='jet', alpha=0.6)
+            
+            ax.axis("off")
+            ax.set_title(f"Focus for: '{word}'", fontsize=14, color='red')
+            
+        plt.tight_layout()
+        plt.savefig(f"{save_path.split('.png')[0]}_{idx}.png", dpi=200)
+        plt.show()

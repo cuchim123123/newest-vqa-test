@@ -1,8 +1,0 @@
-2026-02-26 15:46:57,458 | INFO |   Loaded checkpoint: checkpoints\best_M1_Scratch_NoAttn.pth
-2026-02-26 15:51:24,249 | INFO |   M1_Scratch_NoAttn Acc=0.0000 F1=0.1694 B4=0.0195
-2026-02-26 15:51:24,689 | INFO |   Loaded checkpoint: checkpoints\best_M2_Scratch_Attn.pth
-2026-02-26 15:59:29,604 | INFO |   M2_Scratch_Attn Acc=0.0000 F1=0.1793 B4=0.0191
-2026-02-26 15:59:30,387 | INFO |   Loaded checkpoint: checkpoints\best_M3_Pretrained_NoAttn.pth
-2026-02-26 16:06:17,388 | INFO |   M3_Pretrained_NoAttn Acc=0.0000 F1=0.1719 B4=0.0191
-2026-02-26 16:06:17,891 | INFO |   Loaded checkpoint: checkpoints\best_M4_Pretrained_Attn.pth
-2026-02-26 16:15:10,435 | INFO |   M4_Pretrained_Attn Acc=0.0000 F1=0.1751 B4=0.0199

@@ -87,14 +87,22 @@ def main() -> None:
         train_data = train_data_raw
 
     # ── 4. CHUẨN BỊ DATALOADER ──
-    transform = transforms.Compose([
+    train_transform = transforms.Compose([
+        transforms.Resize((cfg.data.image_size, cfg.data.image_size)),
+        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+    ])
+    
+    val_transform = transforms.Compose([
         transforms.Resize((cfg.data.image_size, cfg.data.image_size)),
         transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
     ])
 
-    train_ds = AOKVQA_Dataset(train_data, question_vocab, answer_vocab, transform)
-    val_ds = AOKVQA_Dataset(val_data, question_vocab, answer_vocab, transform)
+    train_ds = AOKVQA_Dataset(train_data, question_vocab, answer_vocab, train_transform)
+    val_ds = AOKVQA_Dataset(val_data, question_vocab, answer_vocab, val_transform)
 
     loader_kwargs = {
         "batch_size": cfg.train.batch_size,
@@ -114,11 +122,6 @@ def main() -> None:
     variants_to_train = args.models or list(cfg.model_variants.keys())
     
     for name in variants_to_train:
-        ckpt_path = os.path.join(cfg.ckpt_dir, f"best_{name}.pth")
-        if os.path.exists(ckpt_path):
-            logger.info(f"\n{'='*50}\n⏭  Skipping {name} — checkpoint already exists: {ckpt_path}\n{'='*50}")
-            continue
-
         logger.info(f"\n{'='*50}\nTraining Variant: {name}\n{'='*50}")
         
         # Giải phóng bộ nhớ trước khi nạp model mới (Đặc biệt quan trọng cho Mac/MPS)
@@ -146,6 +149,12 @@ def main() -> None:
         os.makedirs(os.path.dirname("data/processed/vocab.pth"), exist_ok=True)
         torch.save({"q_vocab": question_vocab, "a_vocab": answer_vocab}, "data/processed/vocab.pth")
 
+        ckpt_path = os.path.join(cfg.ckpt_dir, f"best_{name}.pth")
+        if os.path.exists(ckpt_path) and not getattr(args, 'force', False):
+            logger.info(f"⏭️  Bỏ qua {name}: checkpoint đã tồn tại tại {ckpt_path}")
+            model.cpu()
+            continue
+
         # Gọi hàm train từ engine
         train_model(
             model=model,
@@ -160,7 +169,7 @@ def main() -> None:
             patience=cfg.train.patience,
             tf_end=cfg.train.tf_end,
             eval_every=cfg.train.eval_every,
-            use_amp=False  # MPS không hỗ trợ tốt AMP
+            use_amp=cfg.train.use_amp  # MPS không hỗ trợ tốt AMP
         )
         
         # Di chuyển model về CPU sau khi train xong để tiết kiệm VRAM cho biến thể tiếp theo
