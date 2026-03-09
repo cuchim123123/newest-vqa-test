@@ -1,50 +1,57 @@
 # ═══════════════════════════════════════════════════════════════════
-# VQA Project — Default Configuration (Final Optimized)
+# VQA Project — Configuration (Optimized for Kaggle NVIDIA Tesla T4 16GB)
 # ═══════════════════════════════════════════════════════════════════
 
 seed: 42
-device: "auto"          # auto | cuda | mps | cpu
+device: "auto"                          # auto-detect CUDA/CPU
 log_dir: "logs"
 ckpt_dir: "checkpoints"
 
 # ── Data ──
 data:
   hf_id: "HuggingFaceM4/A-OKVQA"
-  train_ratio: 0.85                   # 85% train / 15% val from HF train split
-  freq_threshold: 3                   # Đã cập nhật: min word frequency (lọc nhiễu cho rationale)
-  image_size: 224                     # Đã cập nhật: 224 để tương thích chuẩn với ResNet-50
-  expand_rationales: true             # 3× expansion using all rationales
+  train_ratio: 0.85
+  freq_threshold: 3                   # freq>=3 filters noise on larger vocab
+  image_size: 224
+  expand_rationales: false
 
 # ── Model ──
 model:
   embed_size: 300                     # GloVe 300d
-  hidden_size: 256
+  hidden_size: 512                    # BiLSTM + decoder hidden dim
   num_layers: 2                       # 2-layer LSTM
-  dropout: 0.3
-  use_pretrained_cnn: true            # ResNet-18 ImageNet (overridden per variant)
-  use_attention: true                 # Spatial & Text attention (overridden per variant)
+  dropout: 0.3                        # 0.3 — good balance for this architecture
+  use_pretrained_cnn: true            # Overridden per variant
+  use_attention: true                 # Overridden per variant
+  bidirectional: true                 # BiLSTM question encoder
+  num_answers: 0                      # Generative only — no classification head
+  cls_weight: 0.0                     # Disabled — pure generative training
 
-# ── Training ──
+# ── Training (Kaggle T4 optimized) ──
 train:
-  epochs: 20
-  batch_size: 32                      # Đã cập nhật: Phù hợp với bộ nhớ GPU Mac (MPS)
-  learning_rate: 3.0e-4
-  label_smoothing: 0.1
-  grad_clip: 5.0
-  patience: 7                         # Early stopping patience
-  beam_width: 10
-  len_alpha: 0.6                      # Wu et al. 2016 length penalty
-  rep_penalty: 1.2                    # Chống lặp từ khi sinh câu giải thích
-  min_gen_len: 5                      # Đảm bảo câu trả lời không quá ngắn
-  tf_start: 1.0                       # Teacher forcing start ratio
-  tf_end: 0.0                         # Đã cập nhật: Cho phép tf rơi về 0 để Attention hoạt động độc lập
-  scheduler: "cosine"                 # Cosine annealing
+  epochs: 30                          # 30 epochs — more data needs more passes
+  batch_size: 64                      # ↑ from 48 — T4 16GB can handle 64 comfortably
+  learning_rate: 3.0e-4               # Standard LR for larger dataset
+  label_smoothing: 0.1                # Prevents overconfident logits
+  grad_clip: 1.0                      # Tighter clipping — prevents gradient spikes
+  patience: 6                         # Moderate patience — larger data is less noisy
+  beam_width: 5                       # 5-beam search for quality generation
+  len_alpha: 0.7                      # Length normalization — favor slightly longer answers
+  rep_penalty: 1.5                    # Stronger repetition penalty
+  min_gen_len: 3                      # Min tokens before EOS allowed
+  tf_start: 1.0                       # Start with full teacher forcing
+  tf_end: 0.4                         # End at 0.4 — never go below to prevent decoder collapse
+  scheduler: "cosine"                 # Cosine annealing with warmup
   eta_min: 1.0e-6
-  eval_every: 2                       # Đánh giá full metrics mỗi 2 epoch
-  use_amp: true                      # Tắt AMP để tránh lỗi crash trên chip MPS
-  num_workers: 0                      # 0 trên macOS (tránh lỗi PIL pickle)
-  pin_memory: true                   # Không dùng cho MPS
-  warmup_epochs: 3
+  eval_every: 3                       # ↑ from 2 — less frequent eval = faster training
+  use_amp: true                       # AMP FP16 — leverages T4 Tensor Cores
+  num_workers: 2                      # ↑ from 0 — Kaggle Linux supports multiprocess
+  pin_memory: true                    # Fast CPU→GPU transfer
+  warmup_epochs: 3                    # 3 epoch warmup — stabilize before cosine decay
+  weight_decay: 5.0e-5                # Moderate L2 — more data can handle more regularization
+  pretrained_lr_ratio: 0.1            # Backbone LR = main_lr * 0.1
+  unfreeze_after_epoch: 999           # Keep frozen — even 17K is small for ResNet fine-tuning
+  prefetch_factor: 3                  # DataLoader prefetch — overlap CPU/GPU work
 
 # ── Model Variants ──
 model_variants:

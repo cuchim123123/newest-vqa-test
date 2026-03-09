@@ -12,14 +12,15 @@ from tqdm.auto import tqdm
 from src.data.dataset import PAD_IDX
 from src.data.preprocessing import majority_answer, classify_question
 from src.utils.helpers import decode_sequence
-from src.utils.metrics import batch_metrics, compute_exact_match, compute_f1, compute_meteor
+from src.utils.metrics import batch_metrics, compute_exact_match, compute_f1, compute_meteor, compute_wups
 
 logger = logging.getLogger("VQA")
 
 def evaluate_model(
     model: torch.nn.Module, test_loader: DataLoader, answer_vocab: Any,
     question_vocab: Any, device: torch.device, ckpt_dir: str = "checkpoints",
-    name: str = "model", beam_width: int = 5
+    name: str = "model", beam_width: int = 5,
+    len_alpha: float = 0.7, rep_penalty: float = 1.5, min_gen_len: int = 3,
 ) -> dict[str, Any]:
     
     ckpt_path = os.path.join(ckpt_dir, f"best_{name}.pth")
@@ -37,15 +38,24 @@ def evaluate_model(
 
     with torch.no_grad():
         for imgs, qs, ql, ans, al, ans_txt, raw_qs in tqdm(test_loader, desc=f"Test {name}"):
-            imgs, qs, ql = imgs.to(device), qs.to(device), ql.to(device)
-            gen = model.generate(imgs, qs, ql, use_beam=True, beam_width=beam_width, raw_questions=raw_qs)
+            imgs = imgs.to(device, non_blocking=True)
+            qs   = qs.to(device, non_blocking=True)
+            ql   = ql.to(device, non_blocking=True)
+            gen = model.generate(
+                imgs, qs, ql, use_beam=True, beam_width=beam_width,
+                len_alpha=len_alpha, rep_penalty=rep_penalty,
+                min_gen_len=min_gen_len, raw_questions=raw_qs,
+            )
             for i in range(gen.size(0)):
                 preds.append(decode_sequence(gen[i].cpu().tolist(), answer_vocab))
                 refs.append(ans_txt[i])
                 questions_text.append(decode_sequence(qs[i].cpu().tolist(), question_vocab))
 
     m = batch_metrics(preds, refs)
-    logger.info(f"  {name} F1={m['f1']:.4f} BLEU1={m['bleu1']:.4f} BLEU4={m['bleu4']:.4f} METEOR={m['meteor']:.4f}")
+    logger.info(
+        f"  {name} F1={m['f1']:.4f} BLEU4={m['bleu4']:.4f} "
+        f"METEOR={m['meteor']:.4f} WUPS={m.get('wups', 0):.4f}"
+    )
 
     return {"metrics": m, "preds": preds, "refs": refs, "questions": questions_text}
 
@@ -61,7 +71,13 @@ def evaluate_by_question_type(preds, refs, questions):
     for qtype, data in sorted(type_data.items(), key=lambda x: -len(x[1]["preds"])):
         ems = [compute_exact_match(p, r) for p, r in zip(data["preds"], data["refs"])]
         f1s = [compute_f1(p, r) for p, r in zip(data["preds"], data["refs"])]
-        results[qtype] = {"total": len(data["preds"]), "em": float(np.mean(ems)), "f1": float(np.mean(f1s))}
+        wups = [compute_wups(p, r, threshold=0.9) for p, r in zip(data["preds"], data["refs"])]
+        results[qtype] = {
+            "total": len(data["preds"]),
+            "em": float(np.mean(ems)),
+            "f1": float(np.mean(f1s)),
+            "wups": float(np.mean(wups)),
+        }
     return results
 
 def get_failure_cases(preds, refs, questions, n=20):

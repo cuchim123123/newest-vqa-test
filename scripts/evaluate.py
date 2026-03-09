@@ -78,6 +78,8 @@ def main() -> None:
             hidden_size=cfg.model.hidden_size,
             num_layers=cfg.model.num_layers,
             dropout=cfg.model.dropout,
+            bidirectional=cfg.model.bidirectional,
+            num_answers=cfg.model.num_answers,
             **variant_cfg
         ).to(device)
         

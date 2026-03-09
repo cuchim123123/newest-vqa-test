@@ -1,7 +1,7 @@
 """
 Advanced adapters for VQA:
 1. BertQuestionEncoder (Using Contextual Embeddings from BERT instead of GloVe)
-2. BUTD_FasterRCNN_Encoder (Extracting đặc trưng vùng - Region Features from Faster R-CNN)
+2. BUTD_FasterRCNN_Encoder (Extracting region features from Faster R-CNN)
 """
 
 import torch

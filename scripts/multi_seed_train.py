@@ -28,7 +28,7 @@ from src.engine.evaluator import evaluate_model
 from src.utils.helpers import get_device, set_seed, setup_logging
 
 def run_single_seed(cfg: Config, seed: int, device: torch.device, variants: list[str]) -> dict[str, dict[str, float]]:
-    """Chạy toàn bộ quy trình train + eval cho 1 seed cụ thể."""
+    """Run the full train + eval pipeline for a specific seed."""
     set_seed(seed)
     logger = setup_logging(cfg.log_dir)
     logger.info(f"\n{'#' * 40}\n#  RUNNING SEED: {seed}\n{'#' * 40}")
@@ -66,16 +66,39 @@ def run_single_seed(cfg: Config, seed: int, device: torch.device, variants: list
     test_loader = DataLoader(test_ds, shuffle=False, **loader_args)
 
     download_glove()
-    q_emb, a_emb = load_glove_embeddings(q_vocab), load_glove_embeddings(a_vocab)
+    q_emb = load_glove_embeddings(q_vocab, cfg.model.embed_size)
+    a_emb = load_glove_embeddings(a_vocab, cfg.model.embed_size)
 
     seed_results = {}
     for name in variants:
         gc.collect()
         if device.type == "mps": torch.mps.empty_cache()
 
-        model = VQAModel(len(q_vocab), len(a_vocab), q_pretrained_emb=q_emb, a_pretrained_emb=a_emb, **cfg.model_variants[name]).to(device)
+        model = VQAModel(
+            q_vocab_size=len(q_vocab),
+            a_vocab_size=len(a_vocab),
+            embed_size=cfg.model.embed_size,
+            hidden_size=cfg.model.hidden_size,
+            num_layers=cfg.model.num_layers,
+            dropout=cfg.model.dropout,
+            bidirectional=cfg.model.bidirectional,
+            num_answers=cfg.model.num_answers,
+            q_pretrained_emb=q_emb,
+            a_pretrained_emb=a_emb,
+            **cfg.model_variants[name],
+        ).to(device)
         
-        train_model(model, f"{name}_s{seed}", train_loader, val_loader, a_vocab, device, epochs=cfg.train.epochs, ckpt_dir=cfg.ckpt_dir)
+        train_model(
+            model=model, name=f"{name}_s{seed}",
+            train_loader=train_loader, val_loader=val_loader,
+            answer_vocab=a_vocab, device=device,
+            epochs=cfg.train.epochs, lr=cfg.train.learning_rate,
+            ckpt_dir=cfg.ckpt_dir, label_smoothing=cfg.train.label_smoothing,
+            patience=cfg.train.patience, grad_clip=cfg.train.grad_clip,
+            tf_start=cfg.train.tf_start, tf_end=cfg.train.tf_end,
+            warmup_epochs=cfg.train.warmup_epochs, eval_every=cfg.train.eval_every,
+            use_amp=cfg.train.use_amp, cls_weight=cfg.model.cls_weight,
+        )
         
         eval_res = evaluate_model(model, test_loader, a_vocab, q_vocab, device, cfg.ckpt_dir, f"{name}_s{seed}")
         seed_results[name] = eval_res["metrics"]

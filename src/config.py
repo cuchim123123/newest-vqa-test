@@ -11,50 +11,57 @@ class DataConfig:
     train_ratio: float = 0.85
     freq_threshold: int = 3
     image_size: int = 224
-    expand_rationales: bool = True
+    expand_rationales: bool = False
 
 @dataclass
 class ModelConfig:
     """Configuration related to model architecture."""
     embed_size: int = 300
-    hidden_size: int = 256
+    hidden_size: int = 512
     num_layers: int = 2
     dropout: float = 0.3
     use_pretrained_cnn: bool = True
     use_attention: bool = True
+    bidirectional: bool = True
+    num_answers: int = 0            # 0 = disable classification head
+    cls_weight: float = 0.0         # disabled — generative only
 
 @dataclass
 class TrainConfig:
     """Configuration related to training."""
-    epochs: int = 20
-    batch_size: int = 32 
+    epochs: int = 30
+    batch_size: int = 64                      # T4 16GB — 64 fits comfortably
     learning_rate: float = 3e-4
     label_smoothing: float = 0.1
-    grad_clip: float = 5.0
-    patience: int = 7
-    beam_width: int = 10
-    len_alpha: float = 0.6
+    grad_clip: float = 1.0
+    patience: int = 6
+    beam_width: int = 5
+    len_alpha: float = 0.7
     tf_start: float = 1.0
-    tf_end: float = 0.0
+    tf_end: float = 0.4
     scheduler: str = "cosine"
     eta_min: float = 1e-6
-    num_workers: int = 0
+    num_workers: int = 2                      # Kaggle Linux — multiprocess OK
     pin_memory: bool = True
-    eval_every: int = 2       
-    warmup_epochs: int = 3    
-    
-    rep_penalty: float = 1.2
-    min_gen_len: int = 5
-    use_amp: bool = True
+    eval_every: int = 3                       # Less frequent eval = faster
+    warmup_epochs: int = 3
+
+    rep_penalty: float = 1.5
+    min_gen_len: int = 3
+    use_amp: bool = True                      # FP16 — T4 Tensor Cores
+    weight_decay: float = 5e-5
+    pretrained_lr_ratio: float = 0.1
+    unfreeze_after_epoch: int = 999
+    prefetch_factor: int = 3                  # DataLoader prefetch
 
 @dataclass
 class Config:
     """Configuration for the entire project."""
     seed: int = 42
-    device: str = "auto"
-    
-    log_dir: str = "/kaggle/working/logs"
-    ckpt_dir: str = "/kaggle/working/checkpoints"
+    device: str = "auto"                     # auto-detect CUDA/MPS/CPU
+
+    log_dir: str = "logs"
+    ckpt_dir: str = "checkpoints"
     
     data: DataConfig = field(default_factory=DataConfig)
     model: ModelConfig = field(default_factory=ModelConfig)

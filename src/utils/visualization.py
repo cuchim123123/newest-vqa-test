@@ -58,9 +58,13 @@ def visualize_attention(model, loader, answer_vocab, question_vocab, device, n=3
                 text_ctx, t_weights = model.answer_decoder.text_attention(h[-1], q_out, q_mask)
                 img_ctx, s_weights = model.answer_decoder.spatial_attention(h[-1], img_feat)
                 text_attn_list.append(t_weights.cpu().numpy().flatten())
-                inp = torch.cat([emb, text_ctx.unsqueeze(1), img_ctx.unsqueeze(1)], 2)
-                out, (h, c) = model.answer_decoder.lstm(inp, (h, c))
-                pred = model.answer_decoder.fc(out.squeeze(1))
+                # Use GTU fusion (matching decoder.forward logic)
+                raw_concat = torch.cat([emb.squeeze(1), text_ctx, img_ctx], dim=-1)
+                fused = model.answer_decoder.fusion(raw_concat).unsqueeze(1)
+                out, (h, c) = model.answer_decoder.lstm(fused, (h, c))
+                residual = model.answer_decoder.res_proj(fused.squeeze(1))
+                out_res = model.answer_decoder.layer_norm(out.squeeze(1) + residual)
+                pred = model.answer_decoder.fc(out_res)
                 tok = pred.argmax(1)
                 gen_tokens.append(tok.item())
                 if tok.item() == EOS_IDX: break
@@ -74,7 +78,8 @@ def visualize_attention(model, loader, answer_vocab, question_vocab, device, n=3
         im = axes[1].imshow(mat, cmap="YlOrRd", aspect="auto")
         axes[1].set_xticks(range(len(q_toks))); axes[1].set_xticklabels(q_toks, rotation=45)
         axes[1].set_yticks(range(len(a_toks))); axes[1].set_yticklabels(a_toks)
-        plt.colorbar(im, ax=axes[1]); plt.show()
+        plt.colorbar(im, ax=axes[1])
+        plt.tight_layout(); plt.savefig(f"{save_path.split('.png')[0]}_{idx}.png", dpi=200); plt.show()
 
 # ═══════════════════════════════════════════════════════════════════════
 # Missing CLI Helpers
@@ -100,10 +105,10 @@ def plot_bar_chart(test_results: dict[str, dict[str, float]], save_path: str = "
 
 def plot_confusion_matrix(preds, refs, questions=None, save_path="fig8_cm.png", top_k: int = 15):
     """
-    Vẽ Confusion Matrix cho Top-K câu trả lời phổ biến nhất.
-    - preds: list[str]  — câu trả lời dự đoán
-    - refs : list[str | list[str]] — câu trả lời đúng (có thể là list)
-    - top_k: số lượng nhãn hiển thị (mặc định 15)
+    Plot Confusion Matrix for Top-K most frequent answers.
+    - preds: list[str]  — predicted answers
+    - refs : list[str | list[str]] — ground truth answers (can be a list)
+    - top_k: number of labels to display (default 15)
     """
     from collections import Counter
     import numpy as np
@@ -127,8 +132,8 @@ def plot_confusion_matrix(preds, refs, questions=None, save_path="fig8_cm.png", 
 
     matrix = np.zeros((n, n), dtype=int)
     for p, r in zip(preds, flat_refs):
-        row = label_idx[_map(r)]   # true (trục Y)
-        col = label_idx[_map(p)]   # pred (trục X)
+        row = label_idx[_map(r)]   # true (Y axis)
+        col = label_idx[_map(p)]   # pred (X axis)
         matrix[row, col] += 1
 
     # Normalize per row (recall per class)
@@ -163,12 +168,13 @@ def plot_question_type_analysis(type_results, save_path="fig9_qtype.png"):
     f1s = [type_results[t]["f1"] for t in types]
     plt.figure(figsize=(12, 6))
     plt.bar(types, f1s, color=COLORS[1])
-    plt.title("F1 Score by Question Type"); plt.xticks(rotation=45); plt.show()
+    plt.title("F1 Score by Question Type"); plt.xticks(rotation=45)
+    plt.tight_layout(); plt.savefig(save_path, dpi=150); plt.show()
 
 def visualize_attention_overlay(model, loader, answer_vocab, question_vocab, device, n=3, save_path="fig10_spatial_attn.png") -> None:
-    """Vẽ Heatmap đè lên ảnh gốc để thể hiện Spatial Attention."""
+    """Draw heatmap overlay on original image to visualize Spatial Attention."""
     if not model.use_attention: 
-        logger.warning("Mô hình No sử dụng Attention. Bỏ qua vẽ Spatial Overlay.")
+        logger.warning("Model does not use Attention. Skipping Spatial Overlay.")
         return
         
     model.eval()
@@ -190,10 +196,10 @@ def visualize_attention_overlay(model, loader, answer_vocab, question_vocab, dev
         tok = torch.tensor([SOS_IDX], device=device)
         
         gen_tokens = []
-        spatial_weights_list = [] # Save trọng số No gian cho fromng from sinh ra
+        spatial_weights_list = [] # Save spatial weights for each generated token
 
         with torch.no_grad():
-            for step in range(15): # Sinh tối đa 15 from
+            for step in range(15): # Generate up to 15 tokens
                 emb = model.answer_decoder.embedding(tok.unsqueeze(1))
                 text_ctx, _ = model.answer_decoder.text_attention(h[-1], q_out, q_mask)
                 
@@ -201,9 +207,13 @@ def visualize_attention_overlay(model, loader, answer_vocab, question_vocab, dev
                 img_ctx, s_weights = model.answer_decoder.spatial_attention(h[-1], img_feat)
                 spatial_weights_list.append(s_weights.cpu().numpy().flatten())
                 
-                inp = torch.cat([emb, text_ctx.unsqueeze(1), img_ctx.unsqueeze(1)], 2)
-                out, (h, c) = model.answer_decoder.lstm(inp, (h, c))
-                pred = model.answer_decoder.fc(out.squeeze(1))
+                # Use GTU fusion (matching decoder.forward logic)
+                raw_concat = torch.cat([emb.squeeze(1), text_ctx, img_ctx], dim=-1)
+                fused = model.answer_decoder.fusion(raw_concat).unsqueeze(1)
+                out, (h, c) = model.answer_decoder.lstm(fused, (h, c))
+                residual = model.answer_decoder.res_proj(fused.squeeze(1))
+                out_res = model.answer_decoder.layer_norm(out.squeeze(1) + residual)
+                pred = model.answer_decoder.fc(out_res)
                 tok = pred.argmax(1)
                 
                 if tok.item() == EOS_IDX: 

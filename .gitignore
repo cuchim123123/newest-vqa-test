@@ -6,10 +6,25 @@ checkpoints/
 *.h5
 *.bin
 
-# Remove the entire data directory
+# Remove the entire data directory (raw datasets, caches)
 data/
+# But keep src/data/ (our source code for data handling)
+!src/data/
 
 # Remove large image files
 *.webp
 *.jpg
 *.png
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Logs
+logs/
+*.log
+training_log.txt
+training_err.txt
+
+# Checkpoints test
+checkpoints_test_delete_me/

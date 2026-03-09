@@ -134,6 +134,8 @@ def main() -> None:
             hidden_size=cfg.model.hidden_size,
             num_layers=cfg.model.num_layers,
             dropout=cfg.model.dropout,
+            bidirectional=cfg.model.bidirectional,
+            num_answers=cfg.model.num_answers,
             q_pretrained_emb=q_glove,
             a_pretrained_emb=a_glove,
             **variant_cfg
@@ -160,10 +162,16 @@ def main() -> None:
             epochs=cfg.train.epochs,
             lr=cfg.train.learning_rate,
             ckpt_dir=cfg.ckpt_dir,
+            label_smoothing=cfg.train.label_smoothing,
             patience=cfg.train.patience,
+            grad_clip=cfg.train.grad_clip,
+            tf_start=cfg.train.tf_start,
             tf_end=cfg.train.tf_end,
+            warmup_epochs=cfg.train.warmup_epochs,
             eval_every=cfg.train.eval_every,
-            use_amp=cfg.train.use_amp  
+            use_amp=cfg.train.use_amp,
+            cls_weight=cfg.model.cls_weight,
+            answer_to_idx=getattr(answer_vocab, 'stoi', None),
         )
         
         # Move model to CPU after training to save VRAM for next variant

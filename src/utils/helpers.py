@@ -18,7 +18,7 @@ logger = logging.getLogger("VQA")
 
 def get_device() -> torch.device:
     """
-    Tự động phát hiện thiết bị tốt nhất hiện có: CUDA (Nvidia) → MPS (Mac M1/M2/M3) → CPU.
+    Automatically detect the best available device: CUDA (Nvidia) → MPS (Mac M1/M2/M3) → CPU.
     """
     if torch.cuda.is_available():
         return torch.device("cuda")
@@ -29,20 +29,22 @@ def get_device() -> torch.device:
 
 def set_seed(seed: int = 42) -> None:
     """
-    Thiết lập seed ngẫu nhiên để đảm bảo tính tái lập kết quả trên tất cả các thư viện.
+    Set random seed to ensure reproducibility across all libraries.
     """
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
+        # deterministic=False + benchmark=True for speed
+        # Reproducibility comes from manual_seed, not deterministic mode
+        torch.backends.cudnn.deterministic = False
+        torch.backends.cudnn.benchmark = True
 
 
 def setup_logging(log_dir: str = "logs") -> logging.Logger:
     """
-    Thiết lập hệ thống ghi log (logging) ra cả file và terminal.
+    Set up the logging system to output to both file and terminal.
     """
     os.makedirs(log_dir, exist_ok=True)
     vqa_logger = logging.getLogger("VQA")
@@ -68,8 +70,8 @@ def setup_logging(log_dir: str = "logs") -> logging.Logger:
 
 def decode_sequence(sequence: list[int], vocab: Any) -> str:
     """
-    Chuyển đổi danh sách các token ID thành chuỗi văn bản.
-    Dừng lại khi gặp token <EOS> và bỏ qua các token <PAD>/<SOS>.
+    Convert a list of token IDs into a text string.
+    Stops at <EOS> token and skips <PAD>/<SOS> tokens.
     """
     tokens = []
     for idx in sequence:
