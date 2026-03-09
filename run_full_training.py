@@ -64,11 +64,16 @@ logger = setup_logging(cfg.log_dir)
 # ── CUDA Performance Tuning (T4 Tensor Core optimizations) ─────
 if device.type == 'cuda':
     torch.backends.cudnn.benchmark = True           # auto-tune convolution kernels
-    torch.backends.cuda.matmul.allow_tf32 = True    # TF32 for matmul (Turing+)
-    torch.backends.cudnn.allow_tf32 = True           # TF32 for cuDNN convs
+    # TF32 settings (compatible with PyTorch 2.9+)
+    try:
+        torch.backends.cuda.matmul.fp32_precision = 'tf32'
+        torch.backends.cudnn.conv.fp32_precision = 'tf32'
+    except (AttributeError, TypeError):
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
     torch.cuda.empty_cache()
     _gpu_name = torch.cuda.get_device_name(0)
-    _gpu_mem  = torch.cuda.get_device_properties(0).total_mem / 1024**3
+    _gpu_mem  = torch.cuda.get_device_properties(0).total_memory / 1024**3
 else:
     torch.backends.cudnn.benchmark = True
     _gpu_name = "N/A"
