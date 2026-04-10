@@ -243,7 +243,7 @@ def train_model(
         val_loss = val_loss_sum / len(val_loader)
 
         if do_full_eval:
-            m = batch_metrics(preds_all, refs_all)
+            m = batch_metrics(preds_all, refs_all, skip_semantic=True)
             # Top-K accuracy from classifier
             if all_cls_logits:
                 cat_logits = torch.cat(all_cls_logits, 0)

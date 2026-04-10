@@ -212,7 +212,7 @@ def compute_semantic_score(preds: list[str], refs: list) -> float:
 # Batch aggregation
 # ════════════════════════════════════════════════════════════════════
 
-def batch_metrics(predictions: list[str], references: list) -> dict[str, float]:
+def batch_metrics(predictions: list[str], references: list, skip_semantic: bool = False) -> dict[str, float]:
     """Aggregate all metrics over a batch of predictions."""
     results: dict[str, list[float]] = {
         "accuracy": [], "em": [], "f1": [], "meteor": [],
@@ -232,5 +232,8 @@ def batch_metrics(predictions: list[str], references: list) -> dict[str, float]:
             results[k].append(v)
 
     final_metrics = {k: float(np.mean(v)) for k, v in results.items()}
-    final_metrics["semantic"] = compute_semantic_score(predictions, references)
+    if skip_semantic:
+        final_metrics["semantic"] = 0.0
+    else:
+        final_metrics["semantic"] = compute_semantic_score(predictions, references)
     return final_metrics
