@@ -71,6 +71,7 @@ def main() -> None:
         
         # Initialize model based on configuration (With/Without Attention, Pretrained/Scratch)
         variant_cfg = cfg.model_variants.get(name, {})
+        variant_model_cfg = {k: v for k, v in variant_cfg.items() if k != "train_overrides"}
         model = VQAModel(
             q_vocab_size=len(question_vocab),
             a_vocab_size=len(answer_vocab),
@@ -80,7 +81,7 @@ def main() -> None:
             dropout=cfg.model.dropout,
             bidirectional=cfg.model.bidirectional,
             num_answers=cfg.model.num_answers,
-            **variant_cfg
+            **variant_model_cfg
         ).to(device)
         
         # Evaluate using Beam Search for smoothest sequential generation

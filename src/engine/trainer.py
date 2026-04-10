@@ -43,7 +43,7 @@ def train_model(
     eval_every: int = 1, use_amp: bool = False,
     cls_weight: float = 0.0, answer_to_idx: Optional[dict] = None,
     weight_decay: float = 1e-5, pretrained_lr_ratio: float = 0.1,
-    unfreeze_after_epoch: int = 999,
+    unfreeze_after_epoch: int = 14,
 ) -> dict[str, list[float]]:
     """Train a VQA model with optional multi-task classification.
 
@@ -219,10 +219,9 @@ def train_model(
                 ans  = ans.to(device, non_blocking=True)
 
                 with torch.autocast('cuda', enabled=(use_amp and is_cuda)):
-                    # Use tf_ratio=1.0 for val loss — teacher-forced loss is stable
-                    # and comparable to train loss. Free-running (tf=0) causes
-                    # error accumulation that produces misleading val loss values.
-                    out, cls_logits = model(imgs, qs, ql, ans, tf_ratio=1.0, raw_questions=raw_qs)
+                    # Use free-running decoding for val loss so validation curve
+                    # reflects exposure-bias difficulty and is usually higher/noisier.
+                    out, cls_logits = model(imgs, qs, ql, ans, tf_ratio=0.0, raw_questions=raw_qs)
                     val_loss_sum += gen_criterion(
                         out.reshape(-1, out.size(-1)), ans[:, 1:].reshape(-1),
                     ).item()

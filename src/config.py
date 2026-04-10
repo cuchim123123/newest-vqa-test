@@ -30,7 +30,7 @@ class ModelConfig:
 class TrainConfig:
     """Configuration related to training."""
     epochs: int = 30
-    batch_size: int = 64                      # T4 16GB — 64 fits comfortably
+    batch_size: int = 48
     learning_rate: float = 3e-4
     label_smoothing: float = 0.1
     grad_clip: float = 1.0
@@ -41,9 +41,9 @@ class TrainConfig:
     tf_end: float = 0.4
     scheduler: str = "cosine"
     eta_min: float = 1e-6
-    num_workers: int = 2                      # Kaggle Linux — multiprocess OK
+    num_workers: int = 0
     pin_memory: bool = True
-    eval_every: int = 3                       # Less frequent eval = faster
+    eval_every: int = 2
     warmup_epochs: int = 3
 
     rep_penalty: float = 1.5
@@ -51,8 +51,8 @@ class TrainConfig:
     use_amp: bool = True                      # FP16 — T4 Tensor Cores
     weight_decay: float = 5e-5
     pretrained_lr_ratio: float = 0.1
-    unfreeze_after_epoch: int = 999
-    prefetch_factor: int = 3                  # DataLoader prefetch
+    unfreeze_after_epoch: int = 14
+    prefetch_factor: int = 2
 
 @dataclass
 class Config:

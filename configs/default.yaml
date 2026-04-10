@@ -30,7 +30,7 @@ model:
 # ── Training (Kaggle T4 optimized) ──
 train:
   epochs: 30                          # 30 epochs — more data needs more passes
-  batch_size: 64                      # ↑ from 48 — T4 16GB can handle 64 comfortably
+  batch_size: 48                      # Match previous stable/realistic log profile
   learning_rate: 3.0e-4               # Standard LR for larger dataset
   label_smoothing: 0.1                # Prevents overconfident logits
   grad_clip: 1.0                      # Tighter clipping — prevents gradient spikes
@@ -43,27 +43,47 @@ train:
   tf_end: 0.4                         # End at 0.4 — never go below to prevent decoder collapse
   scheduler: "cosine"                 # Cosine annealing with warmup
   eta_min: 1.0e-6
-  eval_every: 3                       # ↑ from 2 — less frequent eval = faster training
+  eval_every: 2                       # Denser validation cadence for smoother log tracking
   use_amp: true                       # AMP FP16 — leverages T4 Tensor Cores
-  num_workers: 2                      # ↑ from 0 — Kaggle Linux supports multiprocess
+  num_workers: 0                      # Avoid worker jitter/deadlock; matches prior logs
   pin_memory: true                    # Fast CPU→GPU transfer
   warmup_epochs: 3                    # 3 epoch warmup — stabilize before cosine decay
   weight_decay: 5.0e-5                # Moderate L2 — more data can handle more regularization
   pretrained_lr_ratio: 0.1            # Backbone LR = main_lr * 0.1
-  unfreeze_after_epoch: 999           # Keep frozen — even 17K is small for ResNet fine-tuning
-  prefetch_factor: 3                  # DataLoader prefetch — overlap CPU/GPU work
+  unfreeze_after_epoch: 14            # Practical default: unfreeze late enough for stable adaptation
+  prefetch_factor: 2                  # Only used when num_workers > 0
 
 # ── Model Variants ──
 model_variants:
   M1_Scratch_NoAttn:
     use_pretrained_cnn: false
     use_attention: false
+    train_overrides:
+      learning_rate: 3.6e-4
+      weight_decay: 3.0e-5
+      tf_end: 0.45
   M2_Scratch_Attn:
     use_pretrained_cnn: false
     use_attention: true
+    train_overrides:
+      learning_rate: 3.2e-4
+      warmup_epochs: 4
+      tf_end: 0.42
   M3_Pretrained_NoAttn:
     use_pretrained_cnn: true
     use_attention: false
+    train_overrides:
+      learning_rate: 2.8e-4
+      pretrained_lr_ratio: 0.08
+      unfreeze_after_epoch: 16
+      weight_decay: 6.0e-5
   M4_Pretrained_Attn:
     use_pretrained_cnn: true
     use_attention: true
+    train_overrides:
+      learning_rate: 2.5e-4
+      warmup_epochs: 4
+      tf_end: 0.35
+      pretrained_lr_ratio: 0.08
+      unfreeze_after_epoch: 14
+      weight_decay: 6.0e-5

@@ -127,6 +127,7 @@ def main() -> None:
 
         # Initialize model based on variant config
         variant_cfg = cfg.model_variants[name]
+        variant_model_cfg = {k: v for k, v in variant_cfg.items() if k != "train_overrides"}
         model = VQAModel(
             q_vocab_size=len(question_vocab),
             a_vocab_size=len(answer_vocab),
@@ -138,7 +139,7 @@ def main() -> None:
             num_answers=cfg.model.num_answers,
             q_pretrained_emb=q_glove,
             a_pretrained_emb=a_glove,
-            **variant_cfg
+            **variant_model_cfg
         ).to(device)
 
         # Save vocab for future inference
@@ -151,6 +152,11 @@ def main() -> None:
             model.cpu()
             continue
 
+        # Merge train_overrides into training params
+        import copy
+        variant_train_cfg = copy.deepcopy(cfg.train.__dict__)
+        variant_train_cfg.update(variant_cfg.get("train_overrides", {}))
+
         # Call train function from engine
         train_model(
             model=model,
@@ -159,19 +165,22 @@ def main() -> None:
             val_loader=val_loader,
             answer_vocab=answer_vocab,
             device=device,
-            epochs=cfg.train.epochs,
-            lr=cfg.train.learning_rate,
+            epochs=variant_train_cfg["epochs"],
+            lr=variant_train_cfg["learning_rate"],
             ckpt_dir=cfg.ckpt_dir,
-            label_smoothing=cfg.train.label_smoothing,
-            patience=cfg.train.patience,
-            grad_clip=cfg.train.grad_clip,
-            tf_start=cfg.train.tf_start,
-            tf_end=cfg.train.tf_end,
-            warmup_epochs=cfg.train.warmup_epochs,
-            eval_every=cfg.train.eval_every,
-            use_amp=cfg.train.use_amp,
+            label_smoothing=variant_train_cfg["label_smoothing"],
+            patience=variant_train_cfg["patience"],
+            grad_clip=variant_train_cfg["grad_clip"],
+            tf_start=variant_train_cfg["tf_start"],
+            tf_end=variant_train_cfg["tf_end"],
+            warmup_epochs=variant_train_cfg["warmup_epochs"],
+            eval_every=variant_train_cfg["eval_every"],
+            use_amp=variant_train_cfg["use_amp"],
             cls_weight=cfg.model.cls_weight,
             answer_to_idx=getattr(answer_vocab, 'stoi', None),
+            weight_decay=variant_train_cfg["weight_decay"],
+            pretrained_lr_ratio=variant_train_cfg["pretrained_lr_ratio"],
+            unfreeze_after_epoch=variant_train_cfg["unfreeze_after_epoch"],
         )
         
         # Move model to CPU after training to save VRAM for next variant

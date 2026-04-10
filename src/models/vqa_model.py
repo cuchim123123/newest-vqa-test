@@ -6,7 +6,7 @@ from collections import Counter
 from typing import Optional
 import torch
 import torch.nn as nn
-from src.data.dataset import PAD_IDX, SOS_IDX, EOS_IDX
+from src.data.dataset import PAD_IDX, UNK_IDX, SOS_IDX, EOS_IDX
 from src.models.encoder import CNNEncoder, QuestionEncoder
 from src.models.decoder import AnswerDecoder
 from src.models.fusion import GatedTanhFusion
@@ -96,8 +96,9 @@ class VQAModel(nn.Module):
     def generate(
         self, images, questions, q_lengths,
         use_beam=False, beam_width=5, max_len=30,
-        len_alpha=0.7, rep_penalty=1.5, min_gen_len=3,
+        len_alpha=0.7, rep_penalty=1.2, min_gen_len=1,
         raw_questions=None,
+        temperature=1.0, suppress_unk=True,
     ):
         img_feat = self.image_encoder(images)
         q_out, (h, c), q_mask = self.question_encoder(questions, q_lengths)
@@ -105,6 +106,7 @@ class VQAModel(nn.Module):
             return self._beam_search(
                 img_feat, q_out, q_mask, h, c,
                 beam_width, max_len, len_alpha, rep_penalty, min_gen_len,
+                temperature=temperature, suppress_unk=suppress_unk,
             )
         return self._greedy(img_feat, q_out, q_mask, h, c, max_len)
 
@@ -124,11 +126,17 @@ class VQAModel(nn.Module):
         self, img_feat, q_out, q_mask, h, c,
         beam_width=5, max_len=30, len_alpha=0.6,
         rep_penalty=1.2, min_gen_len=5,
+        temperature=1.0, suppress_unk=True,
     ):
         B = img_feat.size(0)
         device = img_feat.device
         results = []
         _lp = lambda length: ((5 + length) ** len_alpha) / ((5 + 1) ** len_alpha)
+
+        # Tokens that should never be generated
+        _suppress = {PAD_IDX, SOS_IDX}  # PAD and SOS are never valid outputs
+        if suppress_unk:
+            _suppress.add(UNK_IDX)
 
         for b in range(B):
             im = img_feat[b:b+1]
@@ -149,7 +157,16 @@ class VQAModel(nn.Module):
 
                     tok = torch.tensor([seq[-1]], device=device)
                     pred, nh, nc = self.answer_decoder(tok, hh, cc, im, qo, qm)
+
+                    # Temperature scaling
+                    if temperature != 1.0:
+                        pred = pred / temperature
+
                     lp = torch.log_softmax(pred, -1).squeeze(0)
+
+                    # Suppress invalid tokens (PAD, SOS, optionally UNK)
+                    for t_id in _suppress:
+                        lp[t_id] = -1e9
 
                     # Repetition penalty
                     if rep_penalty > 1.0:

@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>VQA Lab</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+        :root{
+            --bg:#e2e4ea;--surface:#ffffff;--card:#ffffff;--border:#c8ccd4;
+            --text:#1a1a2e;--muted:#555e6e;--accent:#5b4cdb;--accent2:#5b4cdb;
+            --green:#36b37e;--cyan:#0091d5;--orange:#ff8b00;--pink:#e84393;
+        }
+        body{font-family:'Space Grotesk',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden}
+        body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(rgba(91,76,219,.04) 1px,transparent 1px),linear-gradient(90deg,rgba(91,76,219,.04) 1px,transparent 1px);background-size:60px 60px;pointer-events:none;z-index:0}
+        body::after{content:'';position:fixed;top:-50%;left:-50%;width:200%;height:200%;background:radial-gradient(circle at 30% 20%,rgba(91,76,219,.05) 0%,transparent 50%),radial-gradient(circle at 80% 80%,rgba(0,145,213,.04) 0%,transparent 40%);pointer-events:none;z-index:0}
+        .rz{position:relative;z-index:1}
+
+        /* NAV */
+        .navbar{display:flex;align-items:center;justify-content:space-between;padding:0 2rem;height:56px;border-bottom:1px solid var(--border);background:rgba(255,255,255,.85);backdrop-filter:blur(20px);position:sticky;top:0;z-index:100}
+        .nav-brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:1rem;letter-spacing:-.02em}
+        .nav-logo{width:28px;height:28px;background:linear-gradient(135deg,var(--accent),var(--cyan));border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:#fff}
+        .nav-tag{font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;padding:3px 8px;border-radius:6px;background:rgba(91,76,219,.08);color:var(--accent);border:1px solid rgba(91,76,219,.18);letter-spacing:.05em}
+        .nav-dots{display:flex;gap:6px}
+        .nav-dots span{width:10px;height:10px;border-radius:50%;opacity:.7}
+
+        /* LAYOUT */
+        .app{display:grid;grid-template-columns:1fr 1fr;min-height:100vh}
+        @media(max-width:860px){.app{grid-template-columns:1fr}}
+
+        /* LEFT */
+        .left{padding:2.5rem;border-right:1px solid var(--border);display:flex;flex-direction:column;gap:1.5rem}
+        .ph{display:flex;align-items:baseline;gap:12px}
+        .ph h2{font-size:1.3rem;font-weight:700;letter-spacing:-.03em;color:#1a1a2e}
+        .ph .tag{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--muted);border:1px solid var(--border);padding:2px 8px;border-radius:4px}
+
+        /* DROP */
+        .drop{position:relative;border:2px dashed var(--border);border-radius:16px;background:var(--surface);min-height:260px;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:all .3s;overflow:hidden}
+        .drop:hover,.drop.active{border-color:var(--accent);background:rgba(91,76,219,.03)}
+        .drop-ph{text-align:center;display:flex;flex-direction:column;align-items:center;gap:12px}
+        .drop-icon{width:64px;height:64px;border-radius:16px;background:linear-gradient(135deg,rgba(91,76,219,.08),rgba(0,145,213,.06));border:1px solid rgba(91,76,219,.15);display:flex;align-items:center;justify-content:center;font-size:28px;transition:transform .3s}
+        .drop:hover .drop-icon{transform:scale(1.05)}
+        .drop-ph p{font-size:14px;color:var(--text);font-weight:500}
+        .drop-ph .fmt{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--muted);letter-spacing:.08em}
+        .drop input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer}
+        #prev{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;border-radius:14px;display:none;padding:8px}
+
+        /* QUESTION */
+        .qsec{display:flex;flex-direction:column;gap:10px}
+        .qwrap{position:relative}
+        .qi{width:100%;padding:14px 16px;padding-right:52px;border-radius:12px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-family:'Space Grotesk',sans-serif;font-size:15px;outline:none;transition:border-color .2s,box-shadow .2s;resize:none}
+        .qi::placeholder{color:#a0a5b4}
+        .qi:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(91,76,219,.1)}
+        .sendbtn{position:absolute;right:8px;bottom:8px;width:36px;height:36px;border-radius:10px;background:var(--accent);border:none;color:#fff;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .2s}
+        .sendbtn:hover{background:#7c6df7;transform:scale(1.05)}
+        .sendbtn:active{transform:scale(.95)}
+        .sendbtn:disabled{opacity:.4;cursor:not-allowed;transform:none}
+        .sendbtn .sp{display:none;width:16px;height:16px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite}
+        @keyframes spin{to{transform:rotate(360deg)}}
+
+        /* CHIPS */
+        .chips{display:flex;gap:6px;flex-wrap:wrap}
+        .chip{font-family:'JetBrains Mono',monospace;font-size:11px;padding:5px 10px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer;transition:all .2s}
+        .chip:hover{border-color:var(--accent);color:var(--accent);background:rgba(91,76,219,.05)}
+
+        /* STATUS */
+        .sbar{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--muted);min-height:18px;display:flex;align-items:center;gap:6px}
+        .sbar .dot{width:6px;height:6px;border-radius:50%;background:var(--green);animation:pdot 2s ease-in-out infinite}
+        @keyframes pdot{0%,100%{opacity:1}50%{opacity:.3}}
+
+        /* RIGHT */
+        .right{padding:2.5rem;display:flex;flex-direction:column;gap:1.5rem;background:rgba(210,214,222,.35)}
+        .mgrid{display:flex;flex-direction:column;gap:12px;flex:1}
+
+        /* CARDS */
+        .mc{border-radius:14px;background:var(--card);border:1px solid var(--border);padding:20px;display:flex;align-items:flex-start;gap:16px;transition:all .3s;position:relative;overflow:hidden;box-shadow:0 2px 6px rgba(0,0,0,.1)}
+        .mc::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;border-radius:0 3px 3px 0;background:var(--accent)}
+        .mc:hover{border-color:rgba(91,76,219,.3);transform:translateX(4px);box-shadow:0 2px 8px rgba(91,76,219,.08)}
+        .mi{width:42px;height:42px;border-radius:12px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-family:'JetBrains Mono',monospace;font-weight:700;font-size:14px}
+        .mi{background:rgba(91,76,219,.08);color:var(--accent);border:1px solid rgba(91,76,219,.15)}
+        .minfo{flex:1;min-width:0}
+        .minfo .mn{font-size:14px;font-weight:600;margin-bottom:2px;color:#1a1a2e}
+        .minfo .ma{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--muted);margin-bottom:10px}
+        .minfo .mans{font-size:16px;font-weight:600;color:var(--muted);font-style:italic;word-break:break-word;line-height:1.4}
+        .minfo .mans.has{color:#1a1a2e;font-style:normal}
+
+        .anim .mans{animation:tp 1.5s ease-in-out infinite}
+        @keyframes tp{0%,100%{opacity:1}50%{opacity:.4}}
+
+        /* ARCH */
+        .arch{margin-top:auto;padding-top:1.5rem;border-top:1px solid var(--border);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+        .ab{font-family:'JetBrains Mono',monospace;font-size:10px;padding:4px 10px;border-radius:6px;background:var(--surface);border:1px solid var(--border);color:var(--muted)}
+        .aa{color:var(--muted);font-size:12px}
+
+        /* FOOTER */
+        .foot{text-align:center;padding:16px;border-top:1px solid var(--border);font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--muted);opacity:.6}
+        .err .mans{color:#ff6b6b!important;font-style:italic!important}
+    </style>
+</head>
+<body>
+<div class="rz">
+
+
+
+<div class="app">
+    <div class="left">
+        <div class="ph"><h2>Input</h2><span class="tag">01 &mdash; image</span></div>
+
+        <div class="drop" id="dz">
+            <div class="drop-ph" id="ph">
+                <div class="drop-icon">&#128247;</div>
+                <p>Drop an image or click to browse</p>
+                <span class="fmt">JPG &bull; PNG &bull; WEBP</span>
+            </div>
+            <img id="prev" alt="Preview"/>
+            <input type="file" id="fi" accept="image/*" required/>
+        </div>
+
+        <div class="ph"><h2>Question</h2><span class="tag">02 &mdash; query</span></div>
+
+        <div class="qsec">
+            <div class="qwrap">
+                <textarea id="q" class="qi" rows="3" placeholder="What do you see in this image?"></textarea>
+                <button type="button" id="sbtn" class="sendbtn" title="Run inference">
+                    <span id="ba">&#10148;</span>
+                    <div id="bs" class="sp"></div>
+                </button>
+            </div>
+            <div class="chips">
+                <button type="button" class="chip qq" data-q="What is the main object?">what is the main object?</button>
+                <button type="button" class="chip qq" data-q="What color is it?">what color is it?</button>
+                <button type="button" class="chip qq" data-q="How many are there?">how many are there?</button>
+                <button type="button" class="chip qq" data-q="What is happening in this image?">what is happening?</button>
+            </div>
+        </div>
+
+        <div class="sbar" id="st"><div class="dot"></div><span>Ready &mdash; 4 models loaded on GPU</span></div>
+    </div>
+
+    <div class="right">
+        <div class="ph"><h2>Results</h2><span class="tag">inference output</span></div>
+        <div class="mgrid" id="cds"></div>
+        <div class="arch">
+            <span class="ab">ResNet-50</span><span class="aa">&rarr;</span>
+            <span class="ab">BiLSTM</span><span class="aa">&rarr;</span>
+            <span class="ab">Dual Attention</span><span class="aa">&rarr;</span>
+            <span class="ab">GTU Fusion</span><span class="aa">&rarr;</span>
+            <span class="ab">LSTM Decoder</span>
+        </div>
+    </div>
+</div>
+
+<footer class="foot">CNN-BiLSTM &middot; Spatial &amp; Bahdanau Attention &middot; Gated Tanh Fusion &middot; A-OKVQA</footer>
+</div>
+
+<script>
+var M=[
+    {id:"M1_Scratch_NoAttn",n:"M1",nm:"Scratch CNN-LSTM",ar:"scratch \u2022 no attention"},
+    {id:"M2_Scratch_Attn",n:"M2",nm:"Scratch + Attention",ar:"scratch \u2022 dual attention"},
+    {id:"M3_Pretrained_NoAttn",n:"M3",nm:"Pretrained Vision",ar:"resnet-50 \u2022 no attention"},
+    {id:"M4_Pretrained_Attn",n:"M4",nm:"Pretrained + Attention",ar:"resnet-50 \u2022 dual attention"}
+];
+var cds=document.getElementById("cds");
+M.forEach(function(m){
+    cds.insertAdjacentHTML("beforeend",
+        '<div class="mc" id="cd-'+m.id+'">'+
+        '<div class="mi">'+m.n+'</div><div class="minfo">'+
+        '<div class="mn">'+m.nm+'</div><div class="ma">'+m.ar+'</div>'+
+        '<div class="mans" id="a-'+m.id+'">awaiting input\u2026</div></div></div>');
+});
+
+var fi=document.getElementById("fi"),prev=document.getElementById("prev"),
+    ph=document.getElementById("ph"),dz=document.getElementById("dz");
+
+function sp(f){prev.src=URL.createObjectURL(f);prev.style.display="block";ph.style.display="none";var d=new DataTransfer;d.items.add(f);fi.files=d.files}
+fi.addEventListener("change",function(e){if(e.target.files[0])sp(e.target.files[0])});
+["dragenter","dragover"].forEach(function(v){dz.addEventListener(v,function(e){e.preventDefault();dz.classList.add("active")})});
+["dragleave","drop"].forEach(function(v){dz.addEventListener(v,function(e){e.preventDefault();dz.classList.remove("active")})});
+dz.addEventListener("drop",function(e){if(e.dataTransfer.files[0])sp(e.dataTransfer.files[0])});
+document.querySelectorAll(".qq").forEach(function(b){b.addEventListener("click",function(){document.getElementById("q").value=b.dataset.q})});
+
+var sbtn=document.getElementById("sbtn"),ba=document.getElementById("ba"),
+    bs=document.getElementById("bs"),st=document.getElementById("st");
+
+function ss(msg,col){st.innerHTML='<div class="dot" style="background:'+col+'"></div><span>'+msg+'</span>'}
+
+sbtn.addEventListener("click",async function(){
+    var q=document.getElementById("q").value.trim(),f=fi.files&&fi.files[0];
+    if(!q||!f){ss("\u26A0 Upload an image and type a question first","#ff6b6b");return}
+    sbtn.disabled=true;ba.style.display="none";bs.style.display="block";
+    ss("Running inference on 4 models\u2026","var(--orange)");
+    M.forEach(function(m){var c=document.getElementById("cd-"+m.id),e=document.getElementById("a-"+m.id);c.classList.add("anim");c.classList.remove("err");e.textContent="analyzing\u2026";e.className="mans"});
+    var fd=new FormData;fd.append("question",q);fd.append("image",f);
+    try{
+        var r=await fetch("/v1/predict",{method:"POST",body:fd});
+        if(!r.ok){var er=await r.json().catch(function(){return{}});throw new Error(er.detail||"HTTP "+r.status)}
+        var d=await r.json();
+        M.forEach(function(m){var c=document.getElementById("cd-"+m.id),e=document.getElementById("a-"+m.id);c.classList.remove("anim");var a=d.answers&&d.answers[m.id];if(a){e.textContent=a;e.className="mans has"}else{e.textContent="no output";e.className="mans"}});
+        ss("Inference complete \u2713","var(--green)");
+    }catch(err){
+        console.error(err);ss("Error: "+err.message,"#ff6b6b");
+        M.forEach(function(m){var c=document.getElementById("cd-"+m.id),e=document.getElementById("a-"+m.id);c.classList.remove("anim");c.classList.add("err");e.textContent="failed";e.className="mans"});
+    }finally{sbtn.disabled=false;ba.style.display="block";bs.style.display="none"}
+});
+document.getElementById("q").addEventListener("keydown",function(e){if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sbtn.click()}});
+</script>
+</body>
+</html>

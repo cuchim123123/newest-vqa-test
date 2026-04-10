@@ -56,6 +56,7 @@ class VQAInferencePipeline:
         self.models: dict[str, VQAModel] = {}
         for name, state_dict in model_states.items():
             variant_cfg = cfg.model_variants.get(name, {})
+            variant_model_cfg = {k: v for k, v in variant_cfg.items() if k != "train_overrides"}
             model = VQAModel(
                 q_vocab_size=len(self.q_vocab),
                 a_vocab_size=len(self.a_vocab),
@@ -64,7 +65,7 @@ class VQAInferencePipeline:
                 num_layers=model_cfg.get("num_layers", cfg.model.num_layers),
                 dropout=model_cfg.get("dropout", cfg.model.dropout),
                 bidirectional=model_cfg.get("bidirectional", cfg.model.bidirectional),
-                **variant_cfg,
+                **variant_model_cfg,
             )
             model.load_state_dict(state_dict)
             model.to(self.device).eval()

@@ -74,6 +74,7 @@ def run_single_seed(cfg: Config, seed: int, device: torch.device, variants: list
         gc.collect()
         if device.type == "mps": torch.mps.empty_cache()
 
+        variant_model_cfg = {k: v for k, v in cfg.model_variants[name].items() if k != "train_overrides"}
         model = VQAModel(
             q_vocab_size=len(q_vocab),
             a_vocab_size=len(a_vocab),
@@ -85,19 +86,31 @@ def run_single_seed(cfg: Config, seed: int, device: torch.device, variants: list
             num_answers=cfg.model.num_answers,
             q_pretrained_emb=q_emb,
             a_pretrained_emb=a_emb,
-            **cfg.model_variants[name],
+            **variant_model_cfg,
         ).to(device)
         
+        import copy
+        variant_train_cfg = copy.deepcopy(cfg.train.__dict__)
+        variant_train_cfg.update(cfg.model_variants[name].get("train_overrides", {}))
         train_model(
             model=model, name=f"{name}_s{seed}",
             train_loader=train_loader, val_loader=val_loader,
             answer_vocab=a_vocab, device=device,
-            epochs=cfg.train.epochs, lr=cfg.train.learning_rate,
-            ckpt_dir=cfg.ckpt_dir, label_smoothing=cfg.train.label_smoothing,
-            patience=cfg.train.patience, grad_clip=cfg.train.grad_clip,
-            tf_start=cfg.train.tf_start, tf_end=cfg.train.tf_end,
-            warmup_epochs=cfg.train.warmup_epochs, eval_every=cfg.train.eval_every,
-            use_amp=cfg.train.use_amp, cls_weight=cfg.model.cls_weight,
+            epochs=variant_train_cfg["epochs"],
+            lr=variant_train_cfg["learning_rate"],
+            ckpt_dir=cfg.ckpt_dir,
+            label_smoothing=variant_train_cfg["label_smoothing"],
+            patience=variant_train_cfg["patience"],
+            grad_clip=variant_train_cfg["grad_clip"],
+            tf_start=variant_train_cfg["tf_start"],
+            tf_end=variant_train_cfg["tf_end"],
+            warmup_epochs=variant_train_cfg["warmup_epochs"],
+            eval_every=variant_train_cfg["eval_every"],
+            use_amp=variant_train_cfg["use_amp"],
+            cls_weight=cfg.model.cls_weight,
+            weight_decay=variant_train_cfg["weight_decay"],
+            pretrained_lr_ratio=variant_train_cfg["pretrained_lr_ratio"],
+            unfreeze_after_epoch=variant_train_cfg["unfreeze_after_epoch"],
         )
         
         eval_res = evaluate_model(model, test_loader, a_vocab, q_vocab, device, cfg.ckpt_dir, f"{name}_s{seed}")
