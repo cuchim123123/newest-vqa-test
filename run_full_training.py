@@ -197,11 +197,16 @@ print(f"✓ GloVe loaded.")
 # ═══════════════════════════════════════════════════════════════
 # STEP 2: CREATE DATALOADERS
 # ═══════════════════════════════════════════════════════════════
+IS_KAGGLE = os.environ.get("KAGGLE_KERNEL_RUN_TYPE") is not None
+
 BATCH_SIZE = cfg.train.batch_size
-_num_workers = cfg.train.num_workers
-_pin_memory = cfg.train.pin_memory and (device.type == 'cuda')
+_num_workers = 0 if IS_KAGGLE else cfg.train.num_workers
+_pin_memory = (not IS_KAGGLE) and cfg.train.pin_memory and (device.type == 'cuda')
 _prefetch = cfg.train.prefetch_factor if _num_workers > 0 else None
 _persistent = _num_workers > 0  # keep workers alive between epochs
+
+if IS_KAGGLE:
+    print("ℹ️  Kaggle detected: num_workers=0, pin_memory=False (hang prevention)")
 
 loader_common = {
     "batch_size": BATCH_SIZE,
@@ -236,8 +241,15 @@ FORCE_RETRAIN = True  # Set False to skip already-trained variants
 
 for name, variant_cfg in cfg.model_variants.items():
     ckpt_path = os.path.join(cfg.ckpt_dir, f"best_{name}.pth")
+    resume_path = os.path.join(cfg.ckpt_dir, f"resume_{name}.pth")
 
-    if os.path.exists(ckpt_path) and not FORCE_RETRAIN:
+    # Smart skip logic:
+    #  - If a resume checkpoint exists → ALWAYS enter training (trainer.py resumes)
+    #  - If only best exists + FORCE_RETRAIN=False → skip (already trained)
+    #  - If only best exists + FORCE_RETRAIN=True → retrain from scratch
+    if os.path.exists(resume_path):
+        print(f"⏩ {name} has resume checkpoint — will continue training.")
+    elif os.path.exists(ckpt_path) and not FORCE_RETRAIN:
         print(f"✓ {name} checkpoint exists, skipping (set FORCE_RETRAIN=True to override).")
         continue
     elif os.path.exists(ckpt_path) and FORCE_RETRAIN:
