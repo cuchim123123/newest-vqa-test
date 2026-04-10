@@ -117,9 +117,92 @@ MAX_TRAIN = 15000
 MAX_VAL   = 2500
 MAX_TEST  = 1070
 
-# ── Load dataset (offline-first for Kaggle speed) ─────────────
-# If a pre-saved copy exists in /kaggle/input, load from disk instantly.
-# Otherwise download from HuggingFace Hub (slow on Kaggle).
+# ── Load dataset (offline-first, robust HTTP fallback) ────────
+# Priority 1: pre-saved Arrow copy on disk (instant)
+# Priority 2: download parquet files via raw HTTP + requests (no HF Hub)
+# Priority 3: HF Hub load_dataset (often stalls on Kaggle)
+
+def _download_file(url, dest, retries=5, chunk_kb=256):
+    """Download a file with retries + resume support."""
+    import requests
+    from requests.adapters import HTTPAdapter
+    from urllib3.util.retry import Retry
+
+    session = requests.Session()
+    adapter = HTTPAdapter(max_retries=Retry(
+        total=retries, backoff_factor=2,
+        status_forcelist=[429, 500, 502, 503, 504],
+    ))
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+
+    # Support resume
+    existing = os.path.getsize(dest) if os.path.exists(dest) else 0
+    headers = {"Range": f"bytes={existing}-"} if existing else {}
+
+    resp = session.get(url, headers=headers, stream=True, timeout=120)
+    total = int(resp.headers.get("content-length", 0)) + existing
+
+    mode = "ab" if existing and resp.status_code == 206 else "wb"
+    if mode == "wb":
+        existing = 0
+
+    with open(dest, mode) as f:
+        downloaded = existing
+        for chunk in resp.iter_content(chunk_size=chunk_kb * 1024):
+            f.write(chunk)
+            downloaded += len(chunk)
+            pct = downloaded / total * 100 if total else 0
+            mb  = downloaded / 1024 / 1024
+            print(f"\r  {os.path.basename(dest)}: {mb:.1f} MB ({pct:.0f}%)", end="", flush=True)
+    print(flush=True)
+    if total and downloaded < total * 0.99:
+        raise RuntimeError(f"Incomplete download: {downloaded}/{total} bytes")
+
+def _download_aokvqa_via_http(save_dir):
+    """Download A-OKVQA parquet files via raw HTTP, convert to HF Dataset, save."""
+    import pyarrow.parquet as pq
+    from datasets import Dataset, DatasetDict
+
+    _BASE = "https://huggingface.co/datasets/HuggingFaceM4/A-OKVQA/resolve/main/data"
+    _FILES = {
+        "train": [
+            "train-00000-of-00002-c1d24de3bacb5e64.parquet",
+            "train-00001-of-00002-0373d4b158895fde.parquet",
+        ],
+        "validation": [
+            "validation-00000-of-00001-a37d3b3a0252d267.parquet",
+        ],
+    }
+
+    tmp_dir = os.path.join(save_dir, "_parquet_tmp")
+    os.makedirs(tmp_dir, exist_ok=True)
+
+    splits = {}
+    for split_name, files in _FILES.items():
+        tables = []
+        for fname in files:
+            dest = os.path.join(tmp_dir, fname)
+            url  = f"{_BASE}/{fname}"
+            print(f"  Downloading {split_name}: {fname}", flush=True)
+            _download_file(url, dest)
+            tables.append(pq.read_table(dest))
+
+        import pyarrow
+        merged = pyarrow.concat_tables(tables)
+        splits[split_name] = Dataset(merged)
+        print(f"  {split_name}: {len(splits[split_name])} rows loaded", flush=True)
+
+    ds = DatasetDict(splits)
+    ds.save_to_disk(save_dir)
+    print(f"  Saved HF dataset to {save_dir}", flush=True)
+
+    # Cleanup parquet temp files
+    import shutil
+    shutil.rmtree(tmp_dir, ignore_errors=True)
+    return ds
+
+
 _LOCAL_DS_DIRS = [
     os.path.join(project_path, "data", "aokvqa_hf"),       # local dev
     "/kaggle/input/aokvqa-dataset/aokvqa_hf",               # Kaggle input dataset
@@ -133,24 +216,30 @@ for _d in _LOCAL_DS_DIRS:
         break
 
 if _local_ds_path:
+    # ── FAST PATH: load pre-saved Arrow dataset from disk ──
     print(f"Loading dataset OFFLINE from {_local_ds_path} ...", flush=True)
     from datasets import load_from_disk
     _ds = load_from_disk(_local_ds_path)
     hf_train = _ds["train"]
     hf_val   = _ds["validation"]
 else:
-    print(f"Loading dataset ONLINE: {cfg.data.hf_id} ...", flush=True)
-    hf_train = load_dataset(cfg.data.hf_id, split="train")
-    hf_val   = load_dataset(cfg.data.hf_id, split="validation")
-
-    # Auto-save for future offline use
+    # ── DOWNLOAD PATH: raw HTTP parquet download (no HF Hub) ──
     _save_path = os.path.join(project_path, "data", "aokvqa_hf")
+    print(f"Downloading A-OKVQA via HTTP (bypassing HF Hub)...", flush=True)
     try:
-        from datasets import DatasetDict
-        DatasetDict({"train": hf_train, "validation": hf_val}).save_to_disk(_save_path)
-        print(f"Saved dataset to {_save_path} for future offline use", flush=True)
+        _ds = _download_aokvqa_via_http(_save_path)
+        hf_train = _ds["train"]
+        hf_val   = _ds["validation"]
     except Exception as e:
-        print(f"Warning: Could not cache dataset locally: {e}", flush=True)
+        print(f"  HTTP download failed ({e}), falling back to HF Hub...", flush=True)
+        hf_train = load_dataset(cfg.data.hf_id, split="train")
+        hf_val   = load_dataset(cfg.data.hf_id, split="validation")
+        try:
+            from datasets import DatasetDict
+            DatasetDict({"train": hf_train, "validation": hf_val}).save_to_disk(_save_path)
+            print(f"  Saved dataset to {_save_path} for future offline use", flush=True)
+        except Exception:
+            pass
 
 print(f"Full HF dataset: train={len(hf_train)}, val={len(hf_val)}", flush=True)
 
