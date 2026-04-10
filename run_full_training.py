@@ -10,6 +10,7 @@ import gc
 import json
 import time
 import logging
+import copy
 
 # ── Setup path ──────────────────────────────────────────────────
 project_path = os.path.dirname(os.path.abspath(__file__))
@@ -142,10 +143,8 @@ for idx in tqdm(train_indices + val_indices, desc="Vocab (train+val)", leave=Fal
     all_questions.append(row["question"])
     all_answers.append(extract_answer(row))
 
-for idx in tqdm(test_indices, desc="Vocab (test)", leave=False, mininterval=2.0):
-    row = hf_val.select_columns(text_cols)[idx]
-    all_questions.append(row["question"])
-    all_answers.append(extract_answer(row))
+# NOTE: Test set is intentionally EXCLUDED from vocabulary building
+# to prevent data leakage. Test-only words will map to <UNK>.
 
 question_vocab = Vocabulary(freq_threshold=cfg.data.freq_threshold)
 question_vocab.build_vocabulary(all_questions)
@@ -233,16 +232,26 @@ print(f"\n⚡ Training {len(train_dataset):,} samples, {cfg.train.epochs} epochs
 all_histories = {}
 train_start = time.time()
 
+FORCE_RETRAIN = True  # Set False to skip already-trained variants
+
 for name, variant_cfg in cfg.model_variants.items():
     ckpt_path = os.path.join(cfg.ckpt_dir, f"best_{name}.pth")
 
-    if os.path.exists(ckpt_path):
-        print(f"✓ {name} checkpoint exists, skipping.")
+    if os.path.exists(ckpt_path) and not FORCE_RETRAIN:
+        print(f"✓ {name} checkpoint exists, skipping (set FORCE_RETRAIN=True to override).")
         continue
+    elif os.path.exists(ckpt_path) and FORCE_RETRAIN:
+        print(f"⚠️  {name} checkpoint exists but FORCE_RETRAIN=True — retraining.")
 
     print(f"\n{'='*60}")
     print(f"🚀 TRAINING: {name}")
     print(f"{'='*60}")
+
+    variant_model_cfg = {k: v for k, v in variant_cfg.items() if k != "train_overrides"}
+    variant_train_cfg = copy.deepcopy(cfg.train.__dict__)
+    variant_train_cfg.update(variant_cfg.get("train_overrides", {}))
+    if variant_cfg.get("train_overrides"):
+        print(f"  train_overrides: {variant_cfg['train_overrides']}")
 
     model = VQAModel(
         q_vocab_size=Q_VOCAB,
@@ -255,7 +264,7 @@ for name, variant_cfg in cfg.model_variants.items():
         num_answers=cfg.model.num_answers,
         q_pretrained_emb=q_glove_emb,
         a_pretrained_emb=a_glove_emb,
-        **variant_cfg,
+        **variant_model_cfg,
     )
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"  Parameters: {n_params:,}")
@@ -273,23 +282,23 @@ for name, variant_cfg in cfg.model_variants.items():
         val_loader=val_loader,
         answer_vocab=answer_vocab,
         device=device,
-        epochs=cfg.train.epochs,
-        lr=cfg.train.learning_rate,
+        epochs=variant_train_cfg["epochs"],
+        lr=variant_train_cfg["learning_rate"],
         use_beam=False,
-        beam_w=cfg.train.beam_width,
+        beam_w=variant_train_cfg["beam_width"],
         ckpt_dir=cfg.ckpt_dir,
-        label_smoothing=cfg.train.label_smoothing,
-        patience=cfg.train.patience,
-        grad_clip=cfg.train.grad_clip,
-        tf_start=cfg.train.tf_start,
-        tf_end=cfg.train.tf_end,
-        warmup_epochs=cfg.train.warmup_epochs,
-        eval_every=cfg.train.eval_every,
-        use_amp=cfg.train.use_amp,
+        label_smoothing=variant_train_cfg["label_smoothing"],
+        patience=variant_train_cfg["patience"],
+        grad_clip=variant_train_cfg["grad_clip"],
+        tf_start=variant_train_cfg["tf_start"],
+        tf_end=variant_train_cfg["tf_end"],
+        warmup_epochs=variant_train_cfg["warmup_epochs"],
+        eval_every=variant_train_cfg["eval_every"],
+        use_amp=variant_train_cfg["use_amp"],
         cls_weight=cfg.model.cls_weight,
-        weight_decay=cfg.train.weight_decay,
-        pretrained_lr_ratio=cfg.train.pretrained_lr_ratio,
-        unfreeze_after_epoch=cfg.train.unfreeze_after_epoch,
+        weight_decay=variant_train_cfg["weight_decay"],
+        pretrained_lr_ratio=variant_train_cfg["pretrained_lr_ratio"],
+        unfreeze_after_epoch=variant_train_cfg["unfreeze_after_epoch"],
     )
     elapsed = time.time() - t0
     all_histories[name] = hist
@@ -323,12 +332,13 @@ models_dict = {}
 for name, variant_cfg in cfg.model_variants.items():
     ckpt_path = os.path.join(cfg.ckpt_dir, f"best_{name}.pth")
     if os.path.exists(ckpt_path):
+        variant_model_cfg = {k: v for k, v in variant_cfg.items() if k != "train_overrides"}
         m = VQAModel(
             q_vocab_size=Q_VOCAB, a_vocab_size=A_VOCAB,
             embed_size=cfg.model.embed_size, hidden_size=cfg.model.hidden_size,
             num_layers=cfg.model.num_layers, dropout=cfg.model.dropout,
             bidirectional=cfg.model.bidirectional, num_answers=cfg.model.num_answers,
-            **variant_cfg,
+            **variant_model_cfg,
         )
         models_dict[name] = m
         print(f"✓ {name} ready (checkpoint found)")

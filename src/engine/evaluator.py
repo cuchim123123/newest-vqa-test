@@ -26,12 +26,8 @@ def evaluate_model(
     ckpt_path = os.path.join(ckpt_dir, f"best_{name}.pth")
     if os.path.exists(ckpt_path):
         state = torch.load(ckpt_path, map_location=device, weights_only=True)["model"]
-        missing, unexpected = model.load_state_dict(state, strict=False)
-        if missing:
-            logger.warning(f"[{name}] Missing keys (will use defaults): {missing}")
-        if unexpected:
-            logger.warning(f"[{name}] Unexpected keys (ignored): {unexpected}")
-        logger.info(f"Loaded best checkpoint for {name}")
+        model.load_state_dict(state, strict=True)
+        logger.info(f"Loaded best checkpoint for {name} (strict=True, all keys matched)")
 
     model.eval()
     preds, refs, questions_text = [], [], []
