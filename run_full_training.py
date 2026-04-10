@@ -122,8 +122,8 @@ MAX_TEST  = 1070
 # Priority 2: download parquet files via raw HTTP + requests (no HF Hub)
 # Priority 3: HF Hub load_dataset (often stalls on Kaggle)
 
-def _download_file(url, dest, retries=5, chunk_kb=256):
-    """Download a file with retries + resume support."""
+def _download_file(url, dest, retries=5, chunk_kb=512):
+    """Download a file with retries + resume support + HF auth."""
     import requests
     from requests.adapters import HTTPAdapter
     from urllib3.util.retry import Retry
@@ -136,28 +136,47 @@ def _download_file(url, dest, retries=5, chunk_kb=256):
     session.mount("https://", adapter)
     session.mount("http://", adapter)
 
+    # Add HF token if available (needed for gated/rate-limited datasets)
+    hf_token = os.environ.get("HF_TOKEN", "")
+    base_headers = {"Authorization": f"Bearer {hf_token}"} if hf_token else {}
+
+    # Delete corrupt partial file and restart if it exists but is tiny
+    if os.path.exists(dest) and os.path.getsize(dest) < 1024:
+        os.remove(dest)
+
     # Support resume
     existing = os.path.getsize(dest) if os.path.exists(dest) else 0
-    headers = {"Range": f"bytes={existing}-"} if existing else {}
+    headers = {**base_headers, "Range": f"bytes={existing}-"} if existing else base_headers
 
-    resp = session.get(url, headers=headers, stream=True, timeout=120)
+    resp = session.get(url, headers=headers, stream=True, timeout=180)
+
+    # Check we got actual file data, not an HTML error page
+    ct = resp.headers.get("content-type", "")
+    if resp.status_code not in (200, 206) or "text/html" in ct:
+        raise RuntimeError(f"Bad response: HTTP {resp.status_code}, content-type={ct}")
+
     total = int(resp.headers.get("content-length", 0)) + existing
-
     mode = "ab" if existing and resp.status_code == 206 else "wb"
     if mode == "wb":
         existing = 0
 
-    with open(dest, mode) as f:
-        downloaded = existing
-        for chunk in resp.iter_content(chunk_size=chunk_kb * 1024):
-            f.write(chunk)
-            downloaded += len(chunk)
-            pct = downloaded / total * 100 if total else 0
-            mb  = downloaded / 1024 / 1024
-            print(f"\r  {os.path.basename(dest)}: {mb:.1f} MB ({pct:.0f}%)", end="", flush=True)
-    print(flush=True)
-    if total and downloaded < total * 0.99:
-        raise RuntimeError(f"Incomplete download: {downloaded}/{total} bytes")
+    try:
+        with open(dest, mode) as f:
+            downloaded = existing
+            for chunk in resp.iter_content(chunk_size=chunk_kb * 1024):
+                f.write(chunk)
+                downloaded += len(chunk)
+                pct = downloaded / total * 100 if total else 0
+                mb  = downloaded / 1024 / 1024
+                print(f"\r  {os.path.basename(dest)}: {mb:.1f} MB ({pct:.0f}%)", end="", flush=True)
+        print(flush=True)
+        if total and downloaded < total * 0.99:
+            raise RuntimeError(f"Incomplete: {downloaded}/{total} bytes")
+    except Exception:
+        # Delete corrupt partial file so next retry starts fresh
+        if os.path.exists(dest):
+            os.remove(dest)
+        raise
 
 def _download_aokvqa_via_http(save_dir):
     """Download A-OKVQA parquet files via raw HTTP, convert to HF Dataset, save."""
