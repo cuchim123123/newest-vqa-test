@@ -117,10 +117,42 @@ MAX_TRAIN = 15000
 MAX_VAL   = 2500
 MAX_TEST  = 1070
 
-print(f"Loading dataset: {cfg.data.hf_id}...")
-hf_train = load_dataset(cfg.data.hf_id, split="train")
-hf_val   = load_dataset(cfg.data.hf_id, split="validation")
-print(f"Full HF dataset: train={len(hf_train)}, val={len(hf_val)}")
+# ── Load dataset (offline-first for Kaggle speed) ─────────────
+# If a pre-saved copy exists in /kaggle/input, load from disk instantly.
+# Otherwise download from HuggingFace Hub (slow on Kaggle).
+_LOCAL_DS_DIRS = [
+    os.path.join(project_path, "data", "aokvqa_hf"),       # local dev
+    "/kaggle/input/aokvqa-dataset/aokvqa_hf",               # Kaggle input dataset
+    "/kaggle/input/aokvqa-dataset",                          # alt layout
+]
+
+_local_ds_path = None
+for _d in _LOCAL_DS_DIRS:
+    if os.path.isdir(_d):
+        _local_ds_path = _d
+        break
+
+if _local_ds_path:
+    print(f"Loading dataset OFFLINE from {_local_ds_path} ...", flush=True)
+    from datasets import load_from_disk
+    _ds = load_from_disk(_local_ds_path)
+    hf_train = _ds["train"]
+    hf_val   = _ds["validation"]
+else:
+    print(f"Loading dataset ONLINE: {cfg.data.hf_id} ...", flush=True)
+    hf_train = load_dataset(cfg.data.hf_id, split="train")
+    hf_val   = load_dataset(cfg.data.hf_id, split="validation")
+
+    # Auto-save for future offline use
+    _save_path = os.path.join(project_path, "data", "aokvqa_hf")
+    try:
+        from datasets import DatasetDict
+        DatasetDict({"train": hf_train, "validation": hf_val}).save_to_disk(_save_path)
+        print(f"Saved dataset to {_save_path} for future offline use", flush=True)
+    except Exception as e:
+        print(f"Warning: Could not cache dataset locally: {e}", flush=True)
+
+print(f"Full HF dataset: train={len(hf_train)}, val={len(hf_val)}", flush=True)
 
 # Subsample indices
 n_total = len(hf_train)
