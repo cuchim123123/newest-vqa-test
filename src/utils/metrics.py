@@ -212,7 +212,10 @@ def compute_semantic_score(preds: list[str], refs: list) -> float:
 # Batch aggregation
 # ════════════════════════════════════════════════════════════════════
 
-def batch_metrics(predictions: list[str], references: list, skip_semantic: bool = False) -> dict[str, float]:
+def batch_metrics(
+    predictions: list[str], references: list,
+    skip_semantic: bool = False, skip_wups: bool = False,
+) -> dict[str, float]:
     """Aggregate all metrics over a batch of predictions."""
     results: dict[str, list[float]] = {
         "accuracy": [], "em": [], "f1": [], "meteor": [],
@@ -225,7 +228,10 @@ def batch_metrics(predictions: list[str], references: list, skip_semantic: bool 
         results["em"].append(compute_exact_match(pred, ref))
         results["f1"].append(compute_f1(pred, ref))
         results["meteor"].append(compute_meteor(pred, ref))
-        results["wups"].append(compute_wups(pred, ref, threshold=0.9))
+        if skip_wups:
+            results["wups"].append(0.0)
+        else:
+            results["wups"].append(compute_wups(pred, ref, threshold=0.9))
 
         bleus = compute_bleu(pred, ref)
         for k, v in bleus.items():

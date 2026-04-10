@@ -206,33 +206,32 @@ def train_model(
 
         # ── VALIDATE ───────────────────────────────────────────────
         do_full_eval = (epoch % eval_every == 0) or (epoch == epochs)
+        is_final_epoch = (epoch == epochs)
         model.eval()
         val_loss_sum = 0.0
         preds_all, refs_all = [], []
         all_cls_logits, all_cls_targets = [], []
+        _n_val_batches = len(val_loader)
 
         with torch.no_grad():
-            for imgs, qs, ql, ans, al, ans_txt, raw_qs in val_loader:
+            for _vb_idx, (imgs, qs, ql, ans, al, ans_txt, raw_qs) in enumerate(val_loader):
                 imgs = imgs.to(device, non_blocking=True)
                 qs   = qs.to(device, non_blocking=True)
                 ql   = ql.to(device, non_blocking=True)
                 ans  = ans.to(device, non_blocking=True)
 
                 with torch.autocast('cuda', enabled=(use_amp and is_cuda)):
-                    # Use free-running decoding for val loss so validation curve
-                    # reflects exposure-bias difficulty and is usually higher/noisier.
                     out, cls_logits = model(imgs, qs, ql, ans, tf_ratio=0.0, raw_questions=raw_qs)
                     val_loss_sum += gen_criterion(
                         out.reshape(-1, out.size(-1)), ans[:, 1:].reshape(-1),
                     ).item()
 
                 if do_full_eval:
-                    gen = model.generate(imgs, qs, ql, use_beam=use_beam, beam_width=beam_w, raw_questions=raw_qs)
+                    gen = model.generate(imgs, qs, ql, use_beam=False, beam_width=1, raw_questions=raw_qs)
                     for i in range(gen.size(0)):
                         preds_all.append(decode_sequence(gen[i].cpu().tolist(), answer_vocab))
                         refs_all.append(ans_txt[i])
 
-                    # Collect classification logits for Top-K
                     if cls_logits is not None and answer_to_idx is not None:
                         from src.data.preprocessing import majority_answer
                         all_cls_logits.append(cls_logits.cpu())
@@ -240,10 +239,16 @@ def train_model(
                             maj = majority_answer(ref) if isinstance(ref, list) else ref
                             all_cls_targets.append(answer_to_idx.get(maj, -1))
 
-        val_loss = val_loss_sum / len(val_loader)
+                # Heartbeat every 10 batches so Kaggle doesn't look stuck
+                if _vb_idx % 10 == 0:
+                    print(f"\r    val {_vb_idx+1}/{_n_val_batches}", end="", flush=True)
+            print(flush=True)  # newline after heartbeat
+
+        val_loss = val_loss_sum / _n_val_batches
 
         if do_full_eval:
-            m = batch_metrics(preds_all, refs_all, skip_semantic=True)
+            # Skip WUPS during training (slow WordNet lookups); compute on final epoch only
+            m = batch_metrics(preds_all, refs_all, skip_semantic=True, skip_wups=(not is_final_epoch))
             # Top-K accuracy from classifier
             if all_cls_logits:
                 cat_logits = torch.cat(all_cls_logits, 0)
@@ -278,7 +283,7 @@ def train_model(
         # Compact progress line — visible in Kaggle output
         print(f"  [{name}] Ep {epoch:>2d}/{epochs} "
               f"loss={train_loss:.3f}/{val_loss:.3f} "
-              f"F1={m['f1']:.3f} B4={m['bleu4']:.3f} lr={cur_lr:.1e}")
+              f"F1={m['f1']:.3f} B4={m['bleu4']:.3f} lr={cur_lr:.1e}", flush=True)
 
         if do_full_eval and m["f1"] > best_f1:
             best_f1 = m["f1"]
@@ -286,7 +291,7 @@ def train_model(
                 {"epoch": epoch, "model": model.state_dict(), "best_f1": best_f1},
                 os.path.join(ckpt_dir, f"best_{name}.pth"),
             )
-            print(f"    ★ Saved best (F1={best_f1:.4f})")
+            print(f"    ★ Saved best (F1={best_f1:.4f})", flush=True)
 
         # ── Save resume checkpoint every epoch (crash-safe) ────────
         torch.save({
@@ -302,12 +307,12 @@ def train_model(
         }, resume_path)
 
         if do_full_eval and stopper(m["f1"]):
-            print(f"  Early stopping at epoch {epoch}")
+            print(f"  Early stopping at epoch {epoch}", flush=True)
             break
 
     # ── Clean up resume checkpoint after successful training ───────
     if os.path.exists(resume_path):
         os.remove(resume_path)
-        print(f"  ✓ Removed resume checkpoint (training complete)")
+        print(f"  ✓ Removed resume checkpoint (training complete)", flush=True)
 
     return history
