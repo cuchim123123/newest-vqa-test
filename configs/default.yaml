@@ -73,17 +73,20 @@ model_variants:
     use_pretrained_cnn: true
     use_attention: false
     train_overrides:
-      learning_rate: 2.8e-4
-      pretrained_lr_ratio: 0.08
-      unfreeze_after_epoch: 16
-      weight_decay: 6.0e-5
+      learning_rate: 3.0e-4
+      pretrained_lr_ratio: 0.20
+      unfreeze_after_epoch: 6
+      weight_decay: 3.0e-5
+      tf_end: 0.42
+      patience: 8
   M4_Pretrained_Attn:
     use_pretrained_cnn: true
     use_attention: true
     train_overrides:
-      learning_rate: 2.5e-4
+      learning_rate: 2.8e-4
       warmup_epochs: 4
-      tf_end: 0.35
-      pretrained_lr_ratio: 0.08
-      unfreeze_after_epoch: 14
-      weight_decay: 6.0e-5
+      tf_end: 0.42
+      pretrained_lr_ratio: 0.20
+      unfreeze_after_epoch: 6
+      weight_decay: 3.0e-5
+      patience: 8
