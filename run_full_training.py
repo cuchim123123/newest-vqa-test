@@ -251,14 +251,13 @@ else:
         hf_val   = _ds["validation"]
     except Exception as e:
         print(f"  HTTP download failed ({e}), falling back to HF Hub...", flush=True)
+        print(f"  Loading train split...", flush=True)
         hf_train = load_dataset(cfg.data.hf_id, split="train")
+        print(f"  train loaded: {len(hf_train)} rows", flush=True)
+        print(f"  Loading validation split...", flush=True)
         hf_val   = load_dataset(cfg.data.hf_id, split="validation")
-        try:
-            from datasets import DatasetDict
-            DatasetDict({"train": hf_train, "validation": hf_val}).save_to_disk(_save_path)
-            print(f"  Saved dataset to {_save_path} for future offline use", flush=True)
-        except Exception:
-            pass
+        print(f"  val loaded: {len(hf_val)} rows", flush=True)
+        # Skip save_to_disk — it hangs on Kaggle; just use in-memory dataset
 
 print(f"Full HF dataset: train={len(hf_train)}, val={len(hf_val)}", flush=True)
 
@@ -366,6 +365,16 @@ print(f"Train batches: {len(train_loader)} | Val: {len(val_loader)} | Test: {len
 Q_VOCAB = len(question_vocab)
 A_VOCAB = len(answer_vocab)
 print(f"Q vocab: {Q_VOCAB:,} | A vocab: {A_VOCAB:,}")
+all_variant_names = list(cfg.model_variants.keys())
+selected_variants_env = os.environ.get("TRAIN_VARIANTS", "").strip()
+if selected_variants_env:
+    selected_variants = [v.strip() for v in selected_variants_env.split(",") if v.strip()]
+    filtered = {k: v for k, v in cfg.model_variants.items() if k in selected_variants}
+    missing = [v for v in selected_variants if v not in cfg.model_variants]
+    if missing:
+        print(f"Warning: Unknown variants in TRAIN_VARIANTS ignored: {missing}", flush=True)
+    if filtered:
+        cfg.model_variants = filtered
 print(f"Variants to train: {list(cfg.model_variants.keys())}")
 
 # ═══════════════════════════════════════════════════════════════
@@ -377,7 +386,7 @@ print(f"\n⚡ Training {len(train_dataset):,} samples, {cfg.train.epochs} epochs
 all_histories = {}
 train_start = time.time()
 
-FORCE_RETRAIN = True  # Set False to skip already-trained variants
+FORCE_RETRAIN = os.environ.get("FORCE_RETRAIN", "1") == "1"
 
 for name, variant_cfg in cfg.model_variants.items():
     ckpt_path = os.path.join(cfg.ckpt_dir, f"best_{name}.pth")
